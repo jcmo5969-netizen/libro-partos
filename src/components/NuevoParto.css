@@ -1,0 +1,365 @@
+.nuevo-parto-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(5px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.nuevo-parto-modal {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(255, 250, 250, 0.98));
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 1200px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.nuevo-parto-modal.minimized {
+  max-width: 400px;
+  max-height: 60px;
+  min-height: 60px;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  top: auto;
+  left: auto;
+  overflow: visible;
+}
+
+.nuevo-parto-modal.minimized .form-scroll,
+.nuevo-parto-modal.minimized .form-actions {
+  display: none;
+}
+
+.nuevo-parto-modal.minimized .modal-header {
+  display: flex;
+  cursor: pointer;
+}
+
+/* Estilos para el botón de agregar gemelar */
+.btn-agregar-gemelar {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #4caf50, #45a049);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px rgba(76, 175, 80, 0.3);
+}
+
+.btn-agregar-gemelar:hover {
+  background: linear-gradient(135deg, #45a049, #3d8b40);
+  box-shadow: 0 6px 12px rgba(76, 175, 80, 0.4);
+  transform: translateY(-2px);
+}
+
+.btn-agregar-gemelar:active {
+  transform: translateY(0);
+}
+
+/* Indicador de gemelar agregado */
+.gemelar-agregado {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: #e8f5e9;
+  border: 2px solid #4caf50;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #2e7d32;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 2rem;
+  background: linear-gradient(135deg, #ffb6c1, #ffc0cb);
+  border-bottom: 2px solid rgba(255, 182, 193, 0.3);
+  cursor: move;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.minimize-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #8b4a6b;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.minimize-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: #8b4a6b;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  color: #8b4a6b;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: rotate(90deg);
+}
+
+.nuevo-parto-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.form-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2rem;
+}
+
+.form-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.form-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 182, 193, 0.1);
+  border-radius: 10px;
+}
+
+.form-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, #ffb6c1, #ffc0cb);
+  border-radius: 10px;
+}
+
+.form-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, #ffc0cb, #ffd1dc);
+}
+
+.form-section {
+  margin-bottom: 2.5rem;
+  padding-bottom: 2rem;
+  border-bottom: 2px solid rgba(255, 182, 193, 0.2);
+}
+
+.form-section:last-child {
+  border-bottom: none;
+}
+
+.form-section h3 {
+  color: #8b4a6b;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid rgba(255, 182, 193, 0.3);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group.full-width {
+  grid-column: 1 / -1;
+}
+
+.form-group label {
+  color: #6b4a5b;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 0.75rem;
+  border: 2px solid rgba(255, 182, 193, 0.3);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #6b4a5b;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #ffb6c1;
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 0 0 0 3px rgba(255, 182, 193, 0.2);
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.form-group input[type="date"],
+.form-group input[type="time"] {
+  cursor: pointer;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 2rem;
+  background: rgba(255, 182, 193, 0.1);
+  border-top: 2px solid rgba(255, 182, 193, 0.2);
+  flex-wrap: wrap;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.main-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.btn-cancel,
+.btn-save {
+  padding: 0.75rem 2rem;
+  border: none;
+  border-radius: 25px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-cancel {
+  background: rgba(255, 182, 193, 0.3);
+  color: #8b4a6b;
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 182, 193, 0.5);
+}
+
+.btn-save {
+  background: linear-gradient(135deg, #ffb6c1, #ffc0cb);
+  color: #8b4a6b;
+  box-shadow: 0 4px 15px rgba(255, 182, 193, 0.4);
+}
+
+.btn-save:hover {
+  background: linear-gradient(135deg, #ffc0cb, #ffd1dc);
+  box-shadow: 0 6px 20px rgba(255, 182, 193, 0.5);
+}
+
+.btn-draft,
+.btn-load-draft {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 15px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: rgba(255, 182, 193, 0.2);
+  color: #8b4a6b;
+}
+
+.btn-draft:hover,
+.btn-load-draft:hover {
+  background: rgba(255, 182, 193, 0.4);
+  transform: translateY(-2px);
+}
+
+@media (max-width: 768px) {
+  .nuevo-parto-overlay {
+    padding: 1rem;
+  }
+  
+  .nuevo-parto-modal {
+    max-height: 95vh;
+  }
+  
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .modal-header {
+    padding: 1rem 1.5rem;
+  }
+  
+  .form-scroll {
+    padding: 1.5rem;
+  }
+  
+  .form-actions {
+    flex-direction: column;
+    padding: 1rem 1.5rem;
+  }
+  
+  .btn-cancel,
+  .btn-save {
+    width: 100%;
+  }
+}
+
+
+
