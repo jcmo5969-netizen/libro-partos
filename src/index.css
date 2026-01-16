@@ -1,0 +1,101 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  /* Variables de color para el tema rosa pastel */
+  --primary-pink: #ffb6c1;
+  --primary-pink-light: #ffc0cb;
+  --primary-pink-lighter: #ffd1dc;
+  --primary-pink-dark: #ff8fb3;
+  --primary-pink-darker: #ff6b9d;
+  
+  /* Colores de texto */
+  --text-primary: #2d2d2d;
+  --text-secondary: #5a5a5a;
+  --text-tertiary: #8a8a8a;
+  --text-on-pink: #ffffff;
+  
+  /* Colores de fondo */
+  --bg-primary: #fff5f5;
+  --bg-secondary: #ffeef0;
+  --bg-white: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.98);
+  
+  /* Colores de borde */
+  --border-light: rgba(255, 182, 193, 0.2);
+  --border-medium: rgba(255, 182, 193, 0.3);
+  --border-dark: rgba(255, 182, 193, 0.5);
+  
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #fff5f5 0%, #ffeef0 100%);
+  color: var(--text-primary);
+}
+
+#root {
+  width: 100%;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Estilos globales para texto */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+p {
+  color: var(--text-primary);
+}
+
+span {
+  color: var(--text-primary);
+}
+
+/* Asegurar que los inputs y textareas tengan texto visible */
+input, textarea, select {
+  color: var(--text-primary);
+  background-color: var(--bg-white);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Estilos para tablas */
+table {
+  color: var(--text-primary);
+}
+
+th {
+  color: var(--text-primary);
+}
+
+td {
+  color: var(--text-primary);
+}
+
+/* Estilos para botones */
+button {
+  color: var(--text-primary);
+}
+
+button:disabled {
+  color: var(--text-tertiary);
+  opacity: 0.6;
+}
