@@ -36,6 +36,17 @@ async function runMigrations() {
       ? fs.readFileSync(correlativoPath, 'utf-8')
       : null;
     
+    // Migración adicional para médicos, Robson y gemelar
+    const medicosRobsonGemelarPath = path.join(__dirname, '../../migrations/add_medicos_robson_gemelar.sql');
+    const medicosRobsonGemelarSQL = fs.existsSync(medicosRobsonGemelarPath) 
+      ? fs.readFileSync(medicosRobsonGemelarPath, 'utf-8')
+      : null;
+    
+    const horaDestinoGemelarPath = path.join(__dirname, '../../migrations/add_hora_destino_gemelar.sql');
+    const horaDestinoGemelarSQL = fs.existsSync(horaDestinoGemelarPath)
+      ? fs.readFileSync(horaDestinoGemelarPath, 'utf-8')
+      : null;
+    
     console.log('📄 Schemas SQL leídos');
     
     // Verificar conexión
@@ -60,6 +71,44 @@ async function runMigrations() {
         }
       } catch (error) {
         console.warn('⚠️ Advertencia al ejecutar migración de correlativo:', error.message);
+      }
+    }
+    
+    // Ejecutar migración de médicos, Robson y gemelar (si existe y la tabla ya existe)
+    if (medicosRobsonGemelarSQL) {
+      try {
+        // Verificar si la tabla existe
+        const tableCheck = await pool.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = 'partos'
+          );
+        `);
+        
+        if (tableCheck.rows[0].exists) {
+          console.log('📝 Ejecutando migración de médicos, Robson y gemelar...');
+          await pool.query(medicosRobsonGemelarSQL);
+        }
+      } catch (error) {
+        console.warn('⚠️ Advertencia al ejecutar migración de médicos/Robson/gemelar:', error.message);
+      }
+    }
+    
+    if (horaDestinoGemelarSQL) {
+      try {
+        const tableCheck = await pool.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name = 'partos'
+          );
+        `);
+        if (tableCheck.rows[0].exists) {
+          console.log('📝 Ejecutando migración hora/destino gemelar...');
+          await pool.query(horaDestinoGemelarSQL);
+        }
+      } catch (error) {
+        console.warn('⚠️ Advertencia al ejecutar migración hora/destino gemelar:', error.message);
       }
     }
     

@@ -1,0 +1,9 @@
+{
+  "name": "libro-partos-seed-scripts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "mongodb": "^6.3.0"
+  }
+}

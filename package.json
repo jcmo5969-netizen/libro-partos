@@ -1,24 +1,34 @@
 {
   "name": "dashboard-libro-partos",
   "version": "1.0.0",
-  "description": "Dashboard para análisis de datos de libro de partos",
+  "description": "Dashboard Libro de Partos",
+  "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node node_modules/vite/bin/vite.js build",
+    "preview": "node node_modules/vite/bin/vite.js preview",
+    "serve": "node serve-frontend.js",
+    "api": "node server/server.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
     "framer-motion": "^10.16.16",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.577.0",
+    "pg": "^8.13.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "recharts": "^3.4.1",
-    "xlsx": "^0.18.5"
+    "recharts": "^3.4.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.8"
+    "@vitejs/plugin-react": "^6.0.3",
+    "vite": "^8.1.3"
   }
 }

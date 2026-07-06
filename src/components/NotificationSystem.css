@@ -44,6 +44,136 @@
   background: linear-gradient(180deg, #2196f3, #64b5f6);
 }
 
+.notification.error::before {
+  background: linear-gradient(180deg, #d32f2f, #f44336);
+}
+
+.notification-dismiss {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0.25rem;
+}
+.notification-dismiss:hover {
+  opacity: 1;
+}
+
+.notification-log-btn {
+  align-self: flex-end;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  background: rgba(255, 182, 193, 0.4);
+  border: 1px solid rgba(255, 105, 135, 0.4);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.notification-log-btn:hover {
+  background: rgba(255, 182, 193, 0.7);
+}
+
+.notification-log-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.notification-log-panel {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  max-width: 520px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.notification-log-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.notification-log-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.notification-log-header div {
+  display: flex;
+  gap: 0.5rem;
+}
+.btn-clear-log, .btn-close-log {
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.btn-clear-log:hover, .btn-close-log:hover {
+  background: #eee;
+}
+.btn-close-log {
+  background: var(--primary-pink, #ff6b9d);
+  color: white;
+  border-color: transparent;
+}
+
+.notification-log-list {
+  padding: 1rem;
+  overflow-y: auto;
+  flex: 1;
+}
+.notification-log-empty {
+  color: #888;
+  text-align: center;
+  padding: 2rem;
+}
+.notification-log-item {
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  border-radius: 8px;
+  border-left: 4px solid #ccc;
+  background: #fafafa;
+}
+.notification-log-item.error {
+  border-left-color: #f44336;
+  background: #ffebee;
+}
+.notification-log-item.warning {
+  border-left-color: #ff9800;
+  background: #fff8e1;
+}
+.notification-log-time {
+  font-size: 0.75rem;
+  color: #666;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.notification-log-item strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.notification-log-item p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #444;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .notification-icon {
   font-size: 1.8rem;
   flex-shrink: 0;

@@ -1,22 +1,42 @@
 import jwt from 'jsonwebtoken';
 import pool from '../db/connection.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_super_seguro_cambiar_en_produccion';
+if (!process.env.JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET no definido. Definir la variable de entorno JWT_SECRET antes de iniciar en producción.');
+  }
+  console.warn('⚠️  JWT_SECRET no definido. Usar solo en desarrollo local.');
+}
+// M11: el secreto queda ENCAPSULADO en este módulo. No se exporta; el resto del
+// código firma/verifica a través de signToken()/verifyToken().
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-not-for-production';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+/** Firma un JWT con el secreto y expiración configurados. */
+export function signToken(payload) {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+/** Verifica un JWT y devuelve el payload decodificado (lanza si es inválido/expirado). */
+export function verifyToken(token) {
+  return jwt.verify(token, JWT_SECRET);
+}
 
 /**
  * Middleware para verificar el token JWT
  */
 export const authenticateToken = async (req, res, next) => {
   try {
+    // Token desde la cookie httpOnly (preferente) o el header Authorization (compatibilidad).
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+    const token = req.cookies?.token || (authHeader && authHeader.split(' ')[1]); // Bearer TOKEN
 
     if (!token) {
       return res.status(401).json({ error: 'Token de acceso requerido' });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
+    const decoded = verifyToken(token);
+
     // Verificar que el usuario existe y está activo
     const result = await pool.query(
       'SELECT id, username, nombre_completo, email, rol, activo FROM usuarios WHERE id = $1',
@@ -56,6 +76,4 @@ export const requireAdmin = (req, res, next) => {
 
   next();
 };
-
-export { JWT_SECRET };
 

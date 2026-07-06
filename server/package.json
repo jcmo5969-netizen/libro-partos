@@ -8,20 +8,28 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "migrate": "node scripts/migrate.js",
+    "create-db": "node scripts/createDatabase.js",
     "import-data": "node scripts/importData.js",
-    "create-admin": "node scripts/createAdmin.js"
+    "create-admin": "node scripts/createAdmin.js",
+    "seed-data": "node scripts/seedData.js",
+    "pm2:start": "npx pm2 start ecosystem.config.cjs",
+    "pm2:stop": "npx pm2 stop libro-partos-api",
+    "pm2:restart": "npx pm2 restart libro-partos-api",
+    "pm2:logs": "npx pm2 logs libro-partos-api"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "body-parser": "^1.20.2",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.11.3",
-    "xlsx": "^0.18.5"
+    "pg": "^8.11.3"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "pm2": "^5.3.0"
   }
 }

@@ -1,54 +1,95 @@
+import './loadEnv.js';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import dotenv from 'dotenv';
+import cookieParser from 'cookie-parser';
 import { testConnection } from './db/connection.js';
+import { runAutoMigrations } from './db/autoMigrate.js';
 import partosRouter from './routes/partos.js';
 import authRouter from './routes/auth.js';
 import usuariosRouter from './routes/usuarios.js';
 import { authenticateToken } from './middleware/auth.js';
-
-dotenv.config();
+import { loginLimiter } from './middleware/rateLimit.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+if (process.env.TRUST_PROXY === '1') {
+  app.set('trust proxy', 1);
+}
+
+const PRIVATE_ORIGIN_RE =
+  /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/i;
+
+app.disable('x-powered-by');
+
+// Cabeceras tipo helmet (sin paquete helmet: evita ERR_MODULE_NOT_FOUND si falta npm install).
+// CORP cross-origin: mismo criterio que helmet para API consumida desde otro origen (CORS).
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'accelerometer=(), camera=(), geolocation=(), microphone=()');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  if (process.env.NODE_ENV === 'production' && process.env.ENABLE_HSTS === '1') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+  next();
+});
+
 // Configuración CORS
 const corsOptions = {
   origin: function (origin, callback) {
-    // En producción, no permitir requests sin origen
-    if (!origin && process.env.NODE_ENV === 'production') {
+    if (!origin && process.env.NODE_ENV === 'production' && process.env.CORS_ALLOW_NO_ORIGIN !== '1') {
       return callback(new Error('No permitido por CORS'));
     }
-    
-    // Permitir requests sin origen en desarrollo (Postman, curl, etc.)
+
     if (!origin && process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    
-    // Obtener orígenes permitidos desde variables de entorno o usar lista por defecto
-    const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map(o => o.trim()) || [
+
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    const fromEnv = (process.env.CORS_ORIGIN || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+    const defaultLocal = [
       'http://localhost:3000',
+      'http://localhost:3002',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
-      'http://127.0.0.1:5173'
+      'http://127.0.0.1:3002',
+      'http://127.0.0.1:5173',
     ];
-    
-    // En desarrollo, permitir cualquier origen local (IP privada o localhost)
-    const isLocalOrigin = process.env.NODE_ENV !== 'production' && (
-      origin.includes('localhost') || 
-      origin.includes('127.0.0.1') || 
-      /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/.test(origin) || // IPs privadas clase A (10.0.0.0/8)
-      /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin) || // IPs privadas clase C (192.168.0.0/16)
-      /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:\d+$/.test(origin) // IPs privadas clase B (172.16.0.0/12)
-    );
-    
-    if (allowedOrigins.includes(origin) || isLocalOrigin) {
+    const allowedOrigins =
+      fromEnv.length > 0 ? fromEnv : process.env.NODE_ENV !== 'production' ? defaultLocal : [];
+
+    const allowPrivate =
+      process.env.CORS_ALLOW_PRIVATE_NETWORK === '1' ||
+      (process.env.NODE_ENV !== 'production' && process.env.CORS_ALLOW_PRIVATE_NETWORK !== '0');
+
+    if (
+      process.env.NODE_ENV === 'production' &&
+      allowedOrigins.length === 0 &&
+      !allowPrivate
+    ) {
+      console.error(
+        'Producción: defina CORS_ORIGIN (origen del front) o CORS_ALLOW_PRIVATE_NETWORK=1 para LAN.'
+      );
+      return callback(new Error('No permitido por CORS'));
+    }
+
+    const isPrivateLan = allowPrivate && PRIVATE_ORIGIN_RE.test(origin);
+
+    if (allowedOrigins.includes(origin) || isPrivateLan) {
       console.log(`✅ CORS permitido para: ${origin}`);
       callback(null, true);
     } else {
       console.warn(`⚠️ CORS bloqueado para origen: ${origin}`);
-      console.log(`   Orígenes permitidos: ${allowedOrigins.join(', ')}`);
+      console.log(`   Orígenes permitidos: ${allowedOrigins.join(', ') || '(solo red privada en dev)'}`);
       callback(new Error('No permitido por CORS'));
     }
   },
@@ -76,6 +117,7 @@ app.options('*', cors(corsOptions));
 
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
 
 // Logging de requests para debugging CORS
 app.use((req, res, next) => {
@@ -88,36 +130,17 @@ app.use((req, res, next) => {
 });
 
 // Health check
-app.get('/health', async (req, res) => {
-  const dbConnected = await testConnection();
-  res.json({
-    status: 'ok',
-    database: dbConnected ? 'connected' : 'disconnected',
-    timestamp: new Date().toISOString()
-  });
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
 });
 
-// Ruta raíz de la API - Información de endpoints
+// Ruta raíz de la API
 app.get('/api', (req, res) => {
-  res.json({
-    message: 'API del Sistema de Libro de Partos',
-    version: '1.0.0',
-    endpoints: {
-      health: '/health',
-      partos: {
-        list: 'GET /api/partos',
-        count: 'GET /api/partos/count',
-        getById: 'GET /api/partos/:id',
-        create: 'POST /api/partos',
-        update: 'PUT /api/partos/:id',
-        delete: 'DELETE /api/partos/:id'
-      }
-    },
-    documentation: 'Ver README.md o MIGRATION.md para más información'
-  });
+  res.json({ status: 'ok', version: '1.0.0' });
 });
 
-// Rutas API públicas (autenticación)
+// Rutas API públicas (autenticación) — rate limit en login contra fuerza bruta.
+app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRouter);
 
 // Rutas API protegidas (requieren autenticación)
@@ -127,20 +150,41 @@ app.use('/api/usuarios', usuariosRouter);
 // Manejo de errores
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  res.status(500).json({
-    error: 'Error interno del servidor',
-    message: err.message
-  });
+  const isCors = err?.message?.includes('CORS');
+  const status = isCors ? 403 : 500;
+  const body = {
+    error: isCors ? 'Origen no permitido (CORS)' : 'Error interno del servidor',
+  };
+  if (process.env.NODE_ENV !== 'production') {
+    body.message = err.message;
+  }
+  res.status(status).json(body);
 });
 
-// Iniciar servidor
-app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`🚀 Servidor iniciado en puerto ${PORT}`);
+// Iniciar servidor. Interfaz de escucha configurable (M5): por defecto 0.0.0.0
+// (compatibilidad con acceso LAN). Detrás de un reverse proxy, usar HOST=127.0.0.1
+// para no exponer el backend directamente en la red.
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, async () => {
+  console.log(`🚀 Servidor iniciado en ${HOST}:${PORT}`);
   console.log(`📡 API disponible en http://localhost:${PORT}/api`);
-  console.log(`🌐 Servidor accesible desde la red en todas las interfaces (0.0.0.0:${PORT})`);
-  
+  if (HOST === '0.0.0.0') {
+    console.log('🌐 Escuchando en TODAS las interfaces. Detrás de un proxy, define HOST=127.0.0.1.');
+  }
+
   // Probar conexión a la base de datos
-  await testConnection();
+  const dbOk = await testConnection();
+
+  // Ejecutar auto-migraciones idempotentes para garantizar que el esquema
+  // esté alineado con el código (previene fallos al guardar partos por
+  // columnas faltantes cuando se despliega nuevo código sin migrar la BD).
+  if (dbOk) {
+    try {
+      await runAutoMigrations();
+    } catch (error) {
+      console.error('❌ Error en auto-migraciones:', error.message);
+    }
+  }
 });
 
 export default app;

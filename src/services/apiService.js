@@ -2,9 +2,134 @@
  * Servicio para comunicarse con la API REST del backend
  */
 
-import { getAuthHeader } from './authService.js';
+import { getAuthHeader, removeToken } from './authService.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+/** Si el error indica token expirado, cierra sesión y notifica para redirigir a login */
+function handleTokenExpired(error, response) {
+  const msg = (error?.message || '').toLowerCase()
+  const is401 = response?.status === 401
+  const isTokenExpired = msg.includes('token') && (msg.includes('expirado') || msg.includes('expired'))
+  if (is401 || isTokenExpired) {
+    removeToken()
+    window.dispatchEvent(new CustomEvent('auth:token-expired'))
+  }
+}
+
+/**
+ * Normaliza un registro de parto: acepta camelCase y snake_case del backend
+ */
+function normalizeParto(item) {
+  return {
+    ...item,
+    _traceId: item._traceId || item.traceId,
+    fechaParto: item.fechaParto || item.fecha,
+    horaParto: item.horaParto || item.hora,
+    nombreYApellido: item.nombreYApellido || item.nombre,
+    semanasGestacion: item.semanasGestacion || item.eg,
+    tipoAnestesia: item.tipoAnestesia || item.tipoDeAnestesia,
+    perimetroCefalico: item.perimetroCefalico || item.cc,
+    // Campos con acrónimo TDP
+    libertadDeMovimientoOEnTDP:
+      item.libertadDeMovimientoOEnTDP ??
+      item.libertadMovimientoTdp ??
+      item.libertad_de_movimiento_o_en_tdp ??
+      item.libertad_movimiento ??
+      item.libertadMovimiento,
+    regimenHidricoAmplioEnTDP:
+      item.regimenHidricoAmplioEnTDP ??
+      item.regimenHidricoAmplioTdp ??
+      item.regimen_hidrico_amplio_en_tdp ??
+      item.regimenHidrico ??
+      item.regimen_hidrico,
+    // Campos de manejo del dolor
+    manejoFarmacologicoDelDolor:
+      item.manejoFarmacologicoDelDolor ??
+      item.manejoFarmacologicoDolor ??
+      item.manejo_farmacologico_del_dolor ??
+      item.manejoFarmacologico,
+    manejoNoFarmacologicoDelDolor:
+      item.manejoNoFarmacologicoDelDolor ??
+      item.manejoNoFarmacologicoDolor ??
+      item.manejo_no_farmacologico_del_dolor ??
+      item.manejoNoFarmacologico,
+    medidasNoFarmacologicasParaElDolorCuales:
+      item.medidasNoFarmacologicasParaElDolorCuales ??
+      item.medidasNoFarmacologicasDolorCuales ??
+      item.medidas_no_farmacologicas_para_el_dolor_cuales ??
+      item.medidasNoFarmacologicas,
+    // Posición en el expulsivo
+    posicionMaternaEnElExpulsivo:
+      item.posicionMaternaEnElExpulsivo ??
+      item.posicionMaternaExpulsivo ??
+      item.posicion_materna_en_el_expulsivo ??
+      item.posicionExpulsivo ??
+      item.posicion_expulsivo,
+    // Atención con pertinencia cultural
+    atencionConPertinenciaCultural:
+      item.atencionConPertinenciaCultural ??
+      item.atencionPertinenciaCultural ??
+      item.atencion_pertinencia_cultural,
+    // Campos con nombre corto vs nombre completo
+    planDeParto:
+      item.planDeParto ?? item.planParto ?? item.plan_parto,
+    trabajoDeParto:
+      item.trabajoDeParto ?? item.trabajoParto ?? item.trabajo_parto,
+    privadaDeLibertad:
+      item.privadaDeLibertad ?? item.privadaLibertad ?? item.privada_libertad,
+    motivoSinLibertadDeMovimiento:
+      item.motivoSinLibertadDeMovimiento ?? item.motivoSinLibertadMovimiento ?? item.motivo_sin_libertad_movimiento,
+    acompanamientoRN:
+      item.acompanamientoRN ?? item.acompanamientoRn ?? item.acompanamiento_rn,
+    acompanamientoPuerperioInmediato:
+      item.acompanamientoPuerperioInmediato ?? item.acompanamientoPuerperio ?? item.acompanamiento_puerperio,
+    lactanciaPrecoz60MinDeVida:
+      item.lactanciaPrecoz60MinDeVida ?? item.lactanciaPrecoz60min ?? item.lactancia_precoz_60min,
+    parentescoAcompananteRespectoAMadre:
+      item.parentescoAcompananteRespectoAMadre ?? item.parentescoAcompananteMadre ?? item.parentesco_acompanante_madre,
+    parentescoAcompananteRespectoARN:
+      item.parentescoAcompananteRespectoARN ?? item.parentescoAcompananteRn ?? item.parentesco_acompanante_rn,
+    apegoConPiel30Min:
+      item.apegoConPiel30Min ?? item.apegoPiel30min ?? item.apego_piel_30min,
+    alumbramientoConducido:
+      item.alumbramientoConducido ?? item.alumbramiento_conducido,
+    embControlado:
+      item.embControlado ?? item.emb_controlado,
+    pesoMaterno: item.pesoMaterno ?? item.peso_materno,
+    tallaMaterna: item.tallaMaterna ?? item.talla_materna,
+    registradoPor:
+      item.registradoPor ?? item.registrado_por ?? item.responsableLlenado,
+    registradoPorUsername:
+      item.registradoPorUsername ??
+      item.registrado_por_username ??
+      item.createdByUsername,
+    ultimaModificacionPor:
+      item.ultimaModificacionPor ?? item.ultima_modificacion_por,
+    ultimaModificacionUsername:
+      item.ultimaModificacionUsername ?? item.ultima_modificacion_username,
+  };
+}
+
+/**
+ * Tras PUT, el servidor a veces devuelve un subconjunto de campos.
+ * Conserva del cliente los valores que el servidor no reenvía o envía vacíos.
+ */
+export function mergePartoAfterUpdate(clientPayload, serverResponse) {
+  if (!serverResponse || typeof serverResponse !== 'object') {
+    return { ...clientPayload };
+  }
+  const merged = { ...clientPayload };
+  for (const key of Object.keys(serverResponse)) {
+    const v = serverResponse[key];
+    if (v !== undefined && v !== null && v !== '') {
+      merged[key] = v;
+    }
+  }
+  merged._traceId = serverResponse._traceId ?? serverResponse.traceId ?? merged._traceId;
+  merged.id = serverResponse.id ?? merged.id;
+  return merged;
+}
 
 /**
  * Obtiene todos los partos con filtros opcionales
@@ -27,6 +152,7 @@ export async function getPartos(filters = {}) {
     
     const response = await fetch(url, {
       method: 'GET',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -44,17 +170,7 @@ export async function getPartos(filters = {}) {
     const data = await response.json();
     console.log(`✅ Datos recibidos de la API: ${data.length} registros`);
     
-    // Agregar campos de compatibilidad con el formato anterior
-    return data.map(item => ({
-      ...item,
-      _traceId: item._traceId || item.traceId,
-      fechaParto: item.fechaParto || item.fecha,
-      horaParto: item.horaParto || item.hora,
-      nombreYApellido: item.nombreYApellido || item.nombre,
-      semanasGestacion: item.semanasGestacion || item.eg,
-      tipoAnestesia: item.tipoAnestesia || item.tipoDeAnestesia,
-      perimetroCefalico: item.perimetroCefalico || item.cc,
-    }));
+    return data.map(normalizeParto);
   } catch (error) {
     if (error.name === 'AbortError') {
       console.error('⏱️ Timeout al obtener partos (10s)');
@@ -70,12 +186,36 @@ export async function getPartos(filters = {}) {
 }
 
 /**
+ * Obtiene TODOS los partos paginando en lotes, sin importar cuántos haya.
+ * Evita que se pierdan registros por el tope de carga (antes limit fijo).
+ */
+export async function getAllPartos(extraFilters = {}) {
+  const pageSize = 1000;
+  let offset = 0;
+  let all = [];
+
+  // Bucle de seguridad: trae lotes hasta que el backend devuelva menos de pageSize.
+  // Tope duro defensivo de 1,000,000 para evitar bucles infinitos.
+  while (offset < 1000000) {
+    const batch = await getPartos({ ...extraFilters, limit: pageSize, offset });
+    all = all.concat(batch);
+    if (batch.length < pageSize) break; // último lote
+    offset += pageSize;
+  }
+
+  console.log(`✅ getAllPartos: ${all.length} registros cargados en total`);
+  return all;
+}
+
+/**
  * Obtiene un parto por ID
  */
 export async function getPartoById(id) {
   try {
-    const response = await fetch(`${API_BASE_URL}/partos/${id}`);
-    
+    const response = await fetch(`${API_BASE_URL}/partos/${id}`, {
+      credentials: 'include',
+    });
+
     if (!response.ok) {
       if (response.status === 404) {
         return null;
@@ -110,6 +250,7 @@ export async function createParto(partoData) {
     console.log('📤 Enviando datos al servidor:', JSON.stringify(partoData, null, 2));
     const response = await fetch(`${API_BASE_URL}/partos`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -133,13 +274,15 @@ export async function createParto(partoData) {
         : errorData.error || `Error creando parto: ${response.statusText}`;
       
       console.error('❌ Error del servidor:', errorData);
+      handleTokenExpired(new Error(errorMessage), response);
       throw new Error(errorMessage);
     }
     
     const data = JSON.parse(responseText);
     console.log('✅ Parto creado exitosamente:', data.id || data._traceId);
-    return data;
+    return normalizeParto(data);
   } catch (error) {
+    if (error?.message) handleTokenExpired(error, { status: 0 });
     console.error('❌ Error creando parto:', error);
     throw error;
   }
@@ -152,6 +295,7 @@ export async function updateParto(id, partoData) {
   try {
     const response = await fetch(`${API_BASE_URL}/partos/${id}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -159,14 +303,24 @@ export async function updateParto(id, partoData) {
       body: JSON.stringify(partoData),
     });
     
+    const responseText = await response.text();
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `Error actualizando parto: ${response.statusText}`);
+      let errorData;
+      try {
+        errorData = JSON.parse(responseText);
+      } catch (e) {
+        errorData = { error: 'Error desconocido', details: responseText };
+      }
+      const errorMessage = errorData.details
+        ? `${errorData.error}: ${errorData.details}`
+        : errorData.error || `Error actualizando parto: ${response.statusText}`;
+      handleTokenExpired(new Error(errorMessage), response);
+      throw new Error(errorMessage);
     }
-    
-    const data = await response.json();
-    return data;
+    const data = JSON.parse(responseText);
+    return normalizeParto(data);
   } catch (error) {
+    if (error?.message) handleTokenExpired(error, { status: 0 });
     console.error('Error actualizando parto:', error);
     throw error;
   }
@@ -179,6 +333,7 @@ export async function deleteParto(id) {
   try {
     const response = await fetch(`${API_BASE_URL}/partos/${id}`, {
       method: 'DELETE',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -205,6 +360,7 @@ export async function getPartosCount() {
   try {
     const response = await fetch(`${API_BASE_URL}/partos/count`, {
       method: 'GET',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),

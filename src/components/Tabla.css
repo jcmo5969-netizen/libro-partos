@@ -284,6 +284,72 @@
   }
 }
 
+/* Barra de búsqueda rápida (lupa) */
+.tabla-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.tabla-toolbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.tabla-search {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  max-width: 640px;
+  padding: 0.65rem 1rem;
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid rgba(255, 182, 193, 0.45);
+  border-radius: 16px;
+  box-shadow: 0 4px 14px rgba(255, 182, 193, 0.15);
+}
+
+.tabla-search-icon {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+
+.tabla-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.tabla-search-input::placeholder {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.tabla-search-clear {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 182, 193, 0.35);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: background 0.2s ease;
+}
+
+.tabla-search-clear:hover {
+  background: rgba(255, 182, 193, 0.55);
+}
+
 .table-wrapper {
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(15px);
@@ -291,8 +357,42 @@
   padding: 2rem;
   box-shadow: 0 12px 40px rgba(255, 182, 193, 0.3);
   border: 2px solid rgba(255, 182, 193, 0.2);
-  overflow-x: auto;
+  overflow: visible;
   position: relative;
+}
+
+/* Área con altura máxima: scroll vertical + horizontal aquí (no al final de la página) */
+.table-scroll-hint {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.82rem;
+  color: rgba(0, 0, 0, 0.55);
+  line-height: 1.35;
+}
+
+.table-scroll-viewport {
+  max-height: min(62vh, calc(100vh - 280px));
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 182, 193, 0.25);
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll-viewport:focus-within {
+  outline: none;
+}
+
+.table-scroll-viewport::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.table-scroll-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 182, 193, 0.55);
+  border-radius: 8px;
+}
+
+.table-scroll-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 182, 193, 0.75);
 }
 
 .table-wrapper::before {
@@ -400,6 +500,11 @@
 .fecha-header {
   min-width: 120px;
   width: 120px;
+  cursor: pointer;
+}
+
+.fecha-header:hover {
+  background: linear-gradient(135deg, rgba(255, 182, 193, 0.4), rgba(255, 192, 203, 0.4)) !important;
 }
 
 .fecha-cell {
@@ -635,6 +740,14 @@
   .table-wrapper {
     padding: 1rem;
     border-radius: 16px;
+  }
+
+  .table-scroll-viewport {
+    max-height: min(50vh, calc(100vh - 240px));
+  }
+
+  .table-scroll-hint {
+    font-size: 0.75rem;
   }
   
   .data-table {

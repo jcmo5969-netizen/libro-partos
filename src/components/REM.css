@@ -11,7 +11,9 @@
   margin-top: 1.5rem;
   overflow-x: auto;
   border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(255, 182, 193, 0.15);
+  box-shadow: 0 4px 20px rgba(255, 105, 140, 0.12);
+  border: 1px solid rgba(255, 182, 193, 0.4);
+  background: white;
 }
 
 .rem-table {
@@ -21,33 +23,53 @@
   min-width: 1200px;
 }
 
+.rem-table-a1 {
+  min-width: 1800px;
+}
+
 .rem-table th {
-  background: white;
-  color: #333;
+  background: linear-gradient(180deg, #fff5f8 0%, #ffe9f0 100%);
+  color: #2a2a2a;
   font-weight: 700;
   text-align: center;
-  padding: 0.75rem 0.5rem;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 0.85rem 0.6rem;
+  border: 1px solid rgba(220, 80, 120, 0.18);
   font-size: 0.85rem;
+  letter-spacing: 0.01em;
 }
 
 .rem-th-main {
-  background: white !important;
+  background: linear-gradient(180deg, #ffd6e3 0%, #ffc1d4 100%) !important;
+  color: #6e2942 !important;
   font-weight: 800;
-  font-size: 0.9rem;
-  border: 2px solid rgba(0, 0, 0, 0.2) !important;
+  font-size: 0.92rem;
+  border: 1px solid rgba(220, 80, 120, 0.35) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.rem-th-vertical {
+  font-size: 0.78rem !important;
+  line-height: 1.15;
+  padding: 0.6rem 0.4rem !important;
+  max-width: 110px;
+  text-transform: none !important;
 }
 
 .rem-th-group {
-  background: white !important;
-  border-bottom: 2px solid rgba(0, 0, 0, 0.2) !important;
+  background: linear-gradient(180deg, #ffe0eb 0%, #ffd0e0 100%) !important;
+  color: #6e2942 !important;
+  font-weight: 700;
+  border: 1px solid rgba(220, 80, 120, 0.3) !important;
 }
 
 .rem-th-sub {
-  background: white !important;
+  background: linear-gradient(180deg, #fff5f8 0%, #ffeaf2 100%) !important;
+  color: #4a1f30 !important;
   font-weight: 600;
-  font-size: 0.8rem;
-  border-top: 1px dotted rgba(0, 0, 0, 0.2) !important;
+  font-size: 0.78rem;
+  border: 1px solid rgba(220, 80, 120, 0.18) !important;
+  line-height: 1.2;
 }
 
 .rem-th-sub-group {
@@ -73,10 +95,19 @@
 }
 
 .rem-table td {
-  padding: 0.6rem 0.5rem;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  padding: 0.65rem 0.6rem;
+  border: 1px solid rgba(220, 80, 120, 0.12);
   text-align: center;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
+  transition: background 0.15s ease;
+}
+
+.rem-table tbody tr:nth-child(even) td {
+  background: #fffafc;
+}
+
+.rem-table tbody tr:hover td {
+  background: #ffe9f1 !important;
 }
 
 .rem-td-label {
@@ -85,15 +116,20 @@
   color: var(--text-primary);
   background: white;
   padding-left: 1rem !important;
-  min-width: 300px;
-  border-right: 2px solid rgba(0, 0, 0, 0.2) !important;
+  min-width: 240px;
+  border-right: 2px solid rgba(220, 80, 120, 0.25) !important;
 }
 
 .rem-td-value {
-  background: #fffef0;
+  background: #fffafc;
   font-weight: 600;
   color: #333;
-  min-width: 80px;
+  min-width: 70px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-table tbody tr:nth-child(even) .rem-td-label {
+  background: #fff5f8;
 }
 
 .rem-row-total .rem-td-label {

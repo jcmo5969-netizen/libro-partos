@@ -2,8 +2,31 @@ import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import './NuevoParto.css'
 
+const CAMPOS_DECIMALES = new Set([
+  'pesoMaterno', 'tallaMaterna', 'eg',
+  'peso', 'talla', 'cc',
+  'peso2', 'talla2', 'cc2'
+])
+
+function calcularIMC(pesoKg, tallaCm) {
+  const p = parseFloat(String(pesoKg ?? '').replace(',', '.'))
+  const t = parseFloat(String(tallaCm ?? '').replace(',', '.'))
+  if (!Number.isFinite(p) || !Number.isFinite(t) || t <= 0) return null
+  const tallaMt = t / 100
+  return Math.round((p / (tallaMt * tallaMt)) * 10) / 10
+}
+
+function clasificarIMC(imc) {
+  if (imc === null) return null
+  if (imc < 18.5) return { texto: 'Bajo peso', color: '#2196F3' }
+  if (imc < 25)   return { texto: 'Normal', color: '#4CAF50' }
+  if (imc < 30)   return { texto: 'Sobrepeso', color: '#FF9800' }
+  return { texto: 'Obesidad', color: '#F44336' }
+}
+
 function NuevoParto({ onClose, onSave, data = [] }) {
   const [isMinimized, setIsMinimized] = useState(false)
+  const [showGemelarModal, setShowGemelarModal] = useState(false)
   const DRAFT_KEY = 'parto_draft'
   
   // Generar número de parto secuencial basado en el total de registros
@@ -61,6 +84,8 @@ function NuevoParto({ onClose, onSave, data = [] }) {
     nombreYApellido: '',
     rut: '',
     edad: '',
+    pesoMaterno: '',
+    tallaMaterna: '',
     puebloOriginario: 'NO',
     nombrePuebloOriginario: '',
     migrante: 'NO',
@@ -94,6 +119,8 @@ function NuevoParto({ onClose, onSave, data = [] }) {
     medicoAnestesista: '',
     motivoNoAnestesia: '',
     anestesiaLocal: 'NO',
+    detalleAnestesiaCombinada: '',
+    detalleAnestesiaPCA: '',
     manejoFarmacologicoDelDolor: 'NO',
     manejoNoFarmacologicoDelDolor: 'NO',
     medidasNoFarmacologicasParaElDolorCuales: '',
@@ -123,9 +150,12 @@ function NuevoParto({ onClose, onSave, data = [] }) {
     apgar10: '',
     sexo: '',
     malformaciones: 'NO',
-    
+
     medicoObstetra: '',
     medicoPediatra: '',
+    medicoIndicaCesarea: '',
+    medicoOperadorCesarea: '',
+    clasificacionRobson: '',
     matronaPreparto: '',
     matronaParto: '',
     matronaRN: '',
@@ -140,18 +170,37 @@ function NuevoParto({ onClose, onSave, data = [] }) {
     parentescoAcompananteRespectoARN: '',
     lactanciaPrecoz60MinDeVida: 'NO',
     embControlado: 'NO',
-    tallerCHCC: 'NO',
     privadaDeLibertad: 'NO',
     transNoBinario: 'NO',
     destino: '',
     comentarios: '',
     
-    // Inducción detallada
-    tipoInduccion: '',
-    induccionMecanica: '',
-    induccionFarmacologica: '',
-    induccionCombinada: '',
-    detalleInduccion: ''
+    // Datos del segundo recién nacido (gemelar)
+    peso2: '',
+    talla2: '',
+    cc2: '',
+    apgar1_2: '',
+    apgar5_2: '',
+    apgar10_2: '',
+    sexo2: '',
+    malformaciones2: 'NO',
+    medicoObstetra2: '',
+    medicoPediatra2: '',
+    matronaPreparto2: '',
+    matronaParto2: '',
+    matronaRN2: '',
+    acompanamientoPreparto2: 'NO',
+    acompanamientoParto2: 'NO',
+    acompanamientoPuerperioInmediato2: 'NO',
+    nombreAcompanante2: '',
+    parentescoAcompananteRespectoAMadre2: '',
+    apegoConPiel30Min2: 'NO',
+    causaNoApego2: '',
+    acompanamientoRN2: 'NO',
+    parentescoAcompananteRespectoARN2: '',
+    lactanciaPrecoz60MinDeVida2: 'NO',
+    horaParto2: '',
+    destino2: ''
   }
   })
 
@@ -200,9 +249,13 @@ function NuevoParto({ onClose, onSave, data = [] }) {
         [name]: formattedRUT
       }))
     } else {
+      let next = value
+      if (CAMPOS_DECIMALES.has(name) && typeof value === 'string') {
+        next = value.replace(',', '.')
+      }
       setFormData(prev => ({
         ...prev,
-        [name]: value
+        [name]: next
       }))
     }
   }
@@ -225,7 +278,7 @@ function NuevoParto({ onClose, onSave, data = [] }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    
+
     // Limpiar borrador al guardar definitivamente
     clearDraft()
     
@@ -235,12 +288,15 @@ function NuevoParto({ onClose, onSave, data = [] }) {
       // nPartoAno y nPartoMes se generan automáticamente en el backend
       fechaParto: formData.fechaParto,
       horaParto: formData.horaParto,
+      horaParto2: formData.horaParto2 || null,
       tipoParto: formData.tipoParto,
       
       // Datos de la madre - nombres exactos
       nombreYApellido: formData.nombreYApellido,
       rut: formData.rut,
       edad: formData.edad ? parseInt(formData.edad) : null,
+      pesoMaterno: formData.pesoMaterno !== '' && formData.pesoMaterno != null ? parseFloat(formData.pesoMaterno) : null,
+      tallaMaterna: formData.tallaMaterna !== '' && formData.tallaMaterna != null ? parseFloat(formData.tallaMaterna) : null,
       puebloOriginario: formData.puebloOriginario,
       nombrePuebloOriginario: formData.nombrePuebloOriginario,
       migrante: formData.migrante,
@@ -279,6 +335,8 @@ function NuevoParto({ onClose, onSave, data = [] }) {
       medicoAnestesista: formData.medicoAnestesista,
       motivoNoAnestesia: formData.motivoNoAnestesia,
       anestesiaLocal: formData.anestesiaLocal,
+      detalleAnestesiaCombinada: formData.detalleAnestesiaCombinada,
+      detalleAnestesiaPCA: formData.detalleAnestesiaPCA,
       manejoFarmacologicoDelDolor: formData.manejoFarmacologicoDelDolor,
       manejoNoFarmacologicoDelDolor: formData.manejoNoFarmacologicoDelDolor,
       medidasNoFarmacologicasParaElDolorCuales: formData.medidasNoFarmacologicasParaElDolorCuales,
@@ -303,6 +361,9 @@ function NuevoParto({ onClose, onSave, data = [] }) {
       malformaciones: formData.malformaciones,
       medicoObstetra: formData.medicoObstetra,
       medicoPediatra: formData.medicoPediatra,
+      medicoIndicaCesarea: formData.medicoIndicaCesarea,
+      medicoOperadorCesarea: formData.medicoOperadorCesarea,
+      clasificacionRobson: formData.clasificacionRobson,
       matronaPreparto: formData.matronaPreparto,
       matronaParto: formData.matronaParto,
       matronaRN: formData.matronaRN,
@@ -317,11 +378,36 @@ function NuevoParto({ onClose, onSave, data = [] }) {
       parentescoAcompananteRespectoARN: formData.parentescoAcompananteRespectoARN,
       lactanciaPrecoz60MinDeVida: formData.lactanciaPrecoz60MinDeVida,
       embControlado: formData.embControlado,
-      tallerCHCC: formData.tallerCHCC,
       privadaDeLibertad: formData.privadaDeLibertad,
       transNoBinario: formData.transNoBinario,
       destino: formData.destino,
+      destino2: formData.destino2 || null,
       comentarios: formData.comentarios,
+      
+      // Datos del segundo recién nacido (gemelar)
+      peso2: formData.peso2 ? parseFloat(formData.peso2) : null,
+      talla2: formData.talla2 ? parseFloat(formData.talla2) : null,
+      cc2: formData.cc2 ? parseFloat(formData.cc2) : null,
+      apgar1_2: formData.apgar1_2 ? parseInt(formData.apgar1_2) : null,
+      apgar5_2: formData.apgar5_2 ? parseInt(formData.apgar5_2) : null,
+      apgar10_2: formData.apgar10_2 ? parseInt(formData.apgar10_2) : null,
+      sexo2: formData.sexo2,
+      malformaciones2: formData.malformaciones2 === 'SI' ? 1 : 0,
+      medicoObstetra2: formData.medicoObstetra2,
+      medicoPediatra2: formData.medicoPediatra2,
+      matronaPreparto2: formData.matronaPreparto2,
+      matronaParto2: formData.matronaParto2,
+      matronaRN2: formData.matronaRN2,
+      acompanamientoPreparto2: formData.acompanamientoPreparto2,
+      acompanamientoParto2: formData.acompanamientoParto2,
+      acompanamientoPuerperioInmediato2: formData.acompanamientoPuerperioInmediato2,
+      nombreAcompanante2: formData.nombreAcompanante2,
+      parentescoAcompananteRespectoAMadre2: formData.parentescoAcompananteRespectoAMadre2,
+      apegoConPiel30Min2: formData.apegoConPiel30Min2,
+      causaNoApego2: formData.causaNoApego2,
+      acompanamientoRN2: formData.acompanamientoRN2,
+      parentescoAcompananteRespectoARN2: formData.parentescoAcompananteRespectoARN2,
+      lactanciaPrecoz60MinDeVida2: formData.lactanciaPrecoz60MinDeVida2,
       
       // Campos adicionales para compatibilidad con el sistema existente
       numero: getNextNumber().toString(),
@@ -364,7 +450,7 @@ function NuevoParto({ onClose, onSave, data = [] }) {
           onClick={isMinimized ? () => setIsMinimized(false) : undefined}
           style={{ cursor: isMinimized ? 'pointer' : 'move' }}
         >
-          <h2>➕ Nuevo Parto</h2>
+          <h2>Nuevo Parto</h2>
           <div className="header-actions">
             <button 
               className="minimize-btn" 
@@ -373,8 +459,9 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                 setIsMinimized(!isMinimized)
               }}
               title={isMinimized ? "Restaurar" : "Minimizar"}
+              aria-label={isMinimized ? "Restaurar" : "Minimizar"}
             >
-              {isMinimized ? '□' : '—'}
+              {isMinimized ? '[ ]' : '-'}
             </button>
             <button 
               className="close-btn" 
@@ -382,8 +469,9 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                 e.stopPropagation()
                 onClose()
               }}
+              aria-label="Cerrar"
             >
-              ×
+              X
             </button>
           </div>
         </div>
@@ -392,16 +480,22 @@ function NuevoParto({ onClose, onSave, data = [] }) {
           <div className="form-scroll">
             {/* Datos Generales */}
             <section className="form-section">
-              <h3>📋 Datos Generales</h3>
+              <h3>Datos Generales</h3>
               <div className="form-grid">
                 <div className="form-group">
                   <label>Fecha de Parto *</label>
                   <input type="date" name="fechaParto" value={formData.fechaParto} onChange={handleChange} required />
                 </div>
                 <div className="form-group">
-                  <label>Hora de Parto *</label>
+                  <label>{formData.gemela === 'SI' ? 'Hora parto RN1 *' : 'Hora de Parto *'}</label>
                   <input type="time" name="horaParto" value={formData.horaParto} onChange={handleChange} required />
                 </div>
+                {formData.gemela === 'SI' && (
+                  <div className="form-group">
+                    <label>Hora parto RN2</label>
+                    <input type="time" name="horaParto2" value={formData.horaParto2} onChange={handleChange} />
+                  </div>
+                )}
                 <div className="form-group">
                   <label>Tipo de Parto *</label>
                   <select 
@@ -423,9 +517,57 @@ function NuevoParto({ onClose, onSave, data = [] }) {
               </div>
             </section>
 
+            {/* Sección de Cesárea - Solo se muestra si es cesárea - MOVIDA AQUÍ PARA MEJOR VISIBILIDAD */}
+            {(formData.tipoParto === 'CES ELE' || formData.tipoParto === 'CES URG') && (
+              <section className="form-section" style={{ backgroundColor: 'rgba(255, 182, 193, 0.1)', borderRadius: '12px', padding: '1.5rem', marginTop: '1rem' }}>
+                <h3>Información de Cesárea</h3>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label>Clasificación de Robson</label>
+                    <select 
+                      name="clasificacionRobson" 
+                      value={formData.clasificacionRobson} 
+                      onChange={handleChange}
+                    >
+                      <option value="">Seleccione...</option>
+                      <option value="Grupo 1">Grupo 1 - Nulípara, ≥37 semanas, parto único, cefálica, espontáneo</option>
+                      <option value="Grupo 2">Grupo 2 - Nulípara, ≥37 semanas, parto único, cefálica, inducido o cesárea antes del trabajo de parto</option>
+                      <option value="Grupo 3">Grupo 3 - Multipara (sin cesárea previa), ≥37 semanas, parto único, cefálica, espontáneo</option>
+                      <option value="Grupo 4">Grupo 4 - Multipara (sin cesárea previa), ≥37 semanas, parto único, cefálica, inducido o cesárea antes del trabajo de parto</option>
+                      <option value="Grupo 5">Grupo 5 - Con cesárea previa, ≥37 semanas, parto único, cefálica</option>
+                      <option value="Grupo 6">Grupo 6 - Nulípara, parto único, podálica</option>
+                      <option value="Grupo 7">Grupo 7 - Multipara (con o sin cesárea previa), parto único, podálica</option>
+                      <option value="Grupo 8">Grupo 8 - Parto único, transversa u oblicua</option>
+                      <option value="Grupo 9">Grupo 9 - Parto múltiple</option>
+                      <option value="Grupo 10">Grupo 10 - Parto único, cefálica, &lt;37 semanas</option>
+                    </select>
+                  </div>
+                  <div className="form-group full-width">
+                    <label>Causa de Cesárea *</label>
+                    <textarea 
+                      name="causaCesarea" 
+                      value={formData.causaCesarea} 
+                      onChange={handleChange} 
+                      rows="3"
+                      placeholder="Describa la causa de la cesárea..."
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Médico que Indica Cesárea</label>
+                    <input type="text" name="medicoIndicaCesarea" value={formData.medicoIndicaCesarea} onChange={handleChange} />
+                  </div>
+                  <div className="form-group">
+                    <label>Médico que Opera Cesárea</label>
+                    <input type="text" name="medicoOperadorCesarea" value={formData.medicoOperadorCesarea} onChange={handleChange} />
+                  </div>
+                </div>
+              </section>
+            )}
+
             {/* Datos de la Madre */}
             <section className="form-section">
-              <h3>👩 Datos de la Madre</h3>
+              <h3>Datos de la Madre</h3>
               <div className="form-grid">
                 <div className="form-group full-width">
                   <label>Nombre y Apellido *</label>
@@ -439,6 +581,36 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                   <label>Edad *</label>
                   <input type="number" name="edad" value={formData.edad} onChange={handleChange} min="10" max="60" required />
                 </div>
+                <div className="form-group">
+                  <label>Peso materna (kg)</label>
+                  <input type="number" name="pesoMaterno" value={formData.pesoMaterno} onChange={handleChange} min="30" max="250" step="any" />
+                </div>
+                <div className="form-group">
+                  <label>Talla materna (cm)</label>
+                  <input type="number" name="tallaMaterna" value={formData.tallaMaterna} onChange={handleChange} min="120" max="220" step="any" />
+                </div>
+                {/* IMC calculado automáticamente */}
+                {(() => {
+                  const imc = calcularIMC(formData.pesoMaterno, formData.tallaMaterna)
+                  const cls = clasificarIMC(imc)
+                  return (
+                    <div className="form-group">
+                      <label>IMC Materno (calculado)</label>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        padding: '0.5rem 0.75rem',
+                        borderRadius: '8px',
+                        border: `2px solid ${cls ? cls.color : '#ccc'}`,
+                        background: cls ? `${cls.color}15` : '#f5f5f5',
+                        fontWeight: 700,
+                        color: cls ? cls.color : '#999',
+                        fontSize: '1rem'
+                      }}>
+                        {imc ? `${imc} — ${cls.texto}` : 'Ingrese peso y talla para calcular'}
+                      </div>
+                    </div>
+                  )
+                })()}
                 <div className="form-group">
                   <label>Pueblo Originario</label>
                   <select name="puebloOriginario" value={formData.puebloOriginario} onChange={handleChange}>
@@ -505,15 +677,8 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>Gemela</label>
-                  <select name="gemela" value={formData.gemela} onChange={handleChange}>
-                    <option value="NO">NO</option>
-                    <option value="SI">SI</option>
-                  </select>
-                </div>
-                <div className="form-group">
                   <label>EG (semanas)</label>
-                  <input type="number" name="eg" value={formData.eg} onChange={handleChange} min="20" max="45" />
+                  <input type="number" name="eg" value={formData.eg} onChange={handleChange} min="20" max="45" step="any" />
                 </div>
                 <div className="form-group">
                   <label>Días</label>
@@ -677,41 +842,9 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                     <option value="SI">SI</option>
                   </select>
                 </div>
-                <div className="form-group full-width">
-                  <label>Causa Cesárea</label>
-                  <textarea name="causaCesarea" value={formData.causaCesarea} onChange={handleChange} rows="2" />
-                </div>
                 <div className="form-group">
                   <label>EQ</label>
                   <select name="eq" value={formData.eq} onChange={handleChange}>
-                    <option value="NO">NO</option>
-                    <option value="SI">SI</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Tipo de Anestesia</label>
-                  <select name="tipoDeAnestesia" value={formData.tipoDeAnestesia} onChange={handleChange}>
-                    <option value="SIN ANESTESIA">SIN ANESTESIA</option>
-                    <option value="RAQUIDEA">RAQUIDEA</option>
-                    <option value="PERIDURAL">PERIDURAL</option>
-                    <option value="GENERAL">GENERAL</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Hora de Anestesia</label>
-                  <input type="time" name="horaDeAnestesia" value={formData.horaDeAnestesia} onChange={handleChange} />
-                </div>
-                <div className="form-group">
-                  <label>Médico Anestesista</label>
-                  <input type="text" name="medicoAnestesista" value={formData.medicoAnestesista} onChange={handleChange} />
-                </div>
-                <div className="form-group full-width">
-                  <label>Motivo No Anestesia</label>
-                  <textarea name="motivoNoAnestesia" value={formData.motivoNoAnestesia} onChange={handleChange} rows="2" />
-                </div>
-                <div className="form-group">
-                  <label>Anestesia Local</label>
-                  <select name="anestesiaLocal" value={formData.anestesiaLocal} onChange={handleChange}>
                     <option value="NO">NO</option>
                     <option value="SI">SI</option>
                   </select>
@@ -743,7 +876,7 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                 </div>
                 <div className="form-group">
                   <label>Grupo RH</label>
-                  <input type="text" name="grupoRH" value={formData.grupoRH} onChange={handleChange} />
+                  <input type="text" name="grupoRH" value={formData.grupoRH} onChange={handleChange} maxLength={50} />
                 </div>
                 <div className="form-group">
                   <label>Chagas</label>
@@ -766,6 +899,7 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                     <option value="NEGATIVO">NEGATIVO</option>
                     <option value="POSITIVO">POSITIVO</option>
                     <option value="TOMADO">TOMADO</option>
+                    <option value="NA">NA</option>
                   </select>
                 </div>
                 <div className="form-group">
@@ -785,36 +919,123 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>SGB (+)</label>
+                  <label>SGB (Estreptococo)</label>
                   <select name="sgb" value={formData.sgb} onChange={handleChange}>
                     <option value="">Seleccione...</option>
                     <option value="NEGATIVO">NEGATIVO</option>
                     <option value="POSITIVO">POSITIVO</option>
                     <option value="TOMADO">TOMADO</option>
+                    <option value="SIN EXAMEN">Sin examen</option>
                   </select>
                 </div>
                 <div className="form-group">
                   <label>SGB (+) con Tratamiento al Parto</label>
                   <input type="text" name="sgbConTratamientoAlParto" value={formData.sgbConTratamientoAlParto} onChange={handleChange} />
                 </div>
+                <div className="form-group">
+                  <label>EMB Controlado</label>
+                  <select name="embControlado" value={formData.embControlado} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Privada de Libertad</label>
+                  <select name="privadaDeLibertad" value={formData.privadaDeLibertad} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Trans/No Binario</label>
+                  <select name="transNoBinario" value={formData.transNoBinario} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            {/* Sección de Anestesia */}
+            <section className="form-section" style={{ backgroundColor: 'rgba(182, 193, 255, 0.1)', borderRadius: '12px', padding: '1.5rem', marginTop: '1rem' }}>
+              <h3>Información de Anestesia</h3>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Tipo de Anestesia</label>
+                  <select name="tipoDeAnestesia" value={formData.tipoDeAnestesia} onChange={handleChange}>
+                    <option value="SIN ANESTESIA">SIN ANESTESIA</option>
+                    <option value="RAQUIDEA">RAQUIDEA</option>
+                    <option value="PERIDURAL">PERIDURAL</option>
+                    <option value="COMBINADA">COMBINADA</option>
+                    <option value="GENERAL">GENERAL</option>
+                    <option value="PCA">PCA</option>
+                  </select>
+                </div>
+                {formData.tipoDeAnestesia === 'COMBINADA' && (
+                  <div className="form-group full-width">
+                    <label>Detalle de Anestesia Combinada *</label>
+                    <textarea 
+                      name="detalleAnestesiaCombinada" 
+                      value={formData.detalleAnestesiaCombinada || ''} 
+                      onChange={handleChange} 
+                      rows="2"
+                      placeholder="Especifique la combinación (ej: Raquídea + Peridural, etc.)"
+                      required
+                    />
+                  </div>
+                )}
+                {formData.tipoDeAnestesia === 'PCA' && (
+                  <div className="form-group full-width">
+                    <label>Detalle de PCA *</label>
+                    <textarea 
+                      name="detalleAnestesiaPCA" 
+                      value={formData.detalleAnestesiaPCA || ''} 
+                      onChange={handleChange} 
+                      rows="2"
+                      placeholder="Especifique los detalles de la analgesia controlada por el paciente"
+                      required
+                    />
+                  </div>
+                )}
+                <div className="form-group">
+                  <label>Hora de Anestesia</label>
+                  <input type="time" name="horaDeAnestesia" value={formData.horaDeAnestesia} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Médico Anestesista</label>
+                  <input type="text" name="medicoAnestesista" value={formData.medicoAnestesista} onChange={handleChange} />
+                </div>
+                {formData.tipoDeAnestesia === 'SIN ANESTESIA' && (
+                  <div className="form-group full-width">
+                    <label>Motivo No Anestesia</label>
+                    <textarea name="motivoNoAnestesia" value={formData.motivoNoAnestesia} onChange={handleChange} rows="2" />
+                  </div>
+                )}
+                <div className="form-group">
+                  <label>Anestesia Local</label>
+                  <select name="anestesiaLocal" value={formData.anestesiaLocal} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
               </div>
             </section>
 
             {/* Datos del Recién Nacido */}
             <section className="form-section">
-              <h3>👶 Datos del Recién Nacido</h3>
+              <h3>Datos del Recién Nacido</h3>
               <div className="form-grid">
                 <div className="form-group">
                   <label>Peso (g) *</label>
-                  <input type="number" name="peso" value={formData.peso} onChange={handleChange} min="500" max="6000" required />
+                  <input type="number" name="peso" value={formData.peso} onChange={handleChange} min="500" max="6000" step="any" required />
                 </div>
                 <div className="form-group">
                   <label>Talla (cm)</label>
-                  <input type="number" name="talla" value={formData.talla} onChange={handleChange} min="20" max="60" />
+                  <input type="number" name="talla" value={formData.talla} onChange={handleChange} min="20" max="60" step="any" placeholder="Ej. 49.5" />
                 </div>
                 <div className="form-group">
                   <label>CC (cm)</label>
-                  <input type="number" name="cc" value={formData.cc} onChange={handleChange} min="20" max="50" />
+                  <input type="number" name="cc" value={formData.cc} onChange={handleChange} min="20" max="50" step="any" placeholder="Ej. 34.2" />
                 </div>
                 <div className="form-group">
                   <label>APGAR 1'</label>
@@ -925,37 +1146,100 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>EMB Controlado</label>
-                  <select name="embControlado" value={formData.embControlado} onChange={handleChange}>
+                  <label>Gemela</label>
+                  <select 
+                    name="gemela" 
+                    value={formData.gemela} 
+                    onChange={(e) => {
+                      handleChange(e)
+                      if (e.target.value === 'SI') {
+                        setShowGemelarModal(true)
+                      } else if (e.target.value === 'NO') {
+                        // Limpiar datos del segundo recién nacido si se cambia a NO
+                        setFormData(prev => ({
+                          ...prev,
+                          gemela: 'NO',
+                          peso2: '',
+                          talla2: '',
+                          cc2: '',
+                          apgar1_2: '',
+                          apgar5_2: '',
+                          apgar10_2: '',
+                          sexo2: '',
+                          malformaciones2: 'NO',
+                          medicoObstetra2: '',
+                          medicoPediatra2: '',
+                          matronaPreparto2: '',
+                          matronaParto2: '',
+                          matronaRN2: '',
+                          acompanamientoPreparto2: 'NO',
+                          acompanamientoParto2: 'NO',
+                          acompanamientoPuerperioInmediato2: 'NO',
+                          nombreAcompanante2: '',
+                          parentescoAcompananteRespectoAMadre2: '',
+                          apegoConPiel30Min2: 'NO',
+                          causaNoApego2: '',
+                          acompanamientoRN2: 'NO',
+                          parentescoAcompananteRespectoARN2: '',
+                          lactanciaPrecoz60MinDeVida2: 'NO'
+                        }))
+                      }
+                    }}
+                  >
                     <option value="NO">NO</option>
                     <option value="SI">SI</option>
                   </select>
                 </div>
-                <div className="form-group">
-                  <label>Taller CHCC</label>
-                  <select name="tallerCHCC" value={formData.tallerCHCC} onChange={handleChange}>
-                    <option value="NO">NO</option>
-                    <option value="SI">SI</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Privada de Libertad</label>
-                  <select name="privadaDeLibertad" value={formData.privadaDeLibertad} onChange={handleChange}>
-                    <option value="NO">NO</option>
-                    <option value="SI">SI</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Trans/No Binario</label>
-                  <select name="transNoBinario" value={formData.transNoBinario} onChange={handleChange}>
-                    <option value="NO">NO</option>
-                    <option value="SI">SI</option>
-                  </select>
-                </div>
+                {formData.gemela === 'SI' && (
+                  <div className="form-group full-width">
+                    <motion.button
+                      type="button"
+                      className="btn-gemelar"
+                      onClick={() => setShowGemelarModal(true)}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      style={{
+                        padding: '0.75rem 1.5rem',
+                        backgroundColor: '#ff6b9d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '1rem',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        width: '100%',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      Ingresar Datos del Segundo Recién Nacido
+                    </motion.button>
+                    {(formData.peso2 || formData.talla2) && (
+                      <div style={{
+                        marginTop: '0.5rem',
+                        padding: '0.5rem',
+                        backgroundColor: '#e8f5e9',
+                        borderRadius: '8px',
+                        fontSize: '0.9rem',
+                        color: '#2e7d32'
+                      }}>
+                        ✓ Datos del segundo recién nacido guardados
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="form-group full-width">
-                  <label>Destino</label>
-                  <input type="text" name="destino" value={formData.destino} onChange={handleChange} />
+                  <label>{formData.gemela === 'SI' ? 'Destino RN1' : 'Destino'}</label>
+                  <input type="text" name="destino" value={formData.destino} onChange={handleChange} placeholder={formData.gemela === 'SI' ? 'Ej. Sala' : 'Ej. Sala, Neo'} />
                 </div>
+                {formData.gemela === 'SI' && (
+                  <div className="form-group full-width">
+                    <label>Destino RN2</label>
+                    <input type="text" name="destino2" value={formData.destino2} onChange={handleChange} placeholder="Ej. Neo, Sala" />
+                  </div>
+                )}
                 <div className="form-group full-width">
                   <label>Comentarios</label>
                   <textarea name="comentarios" value={formData.comentarios} onChange={handleChange} rows="4" />
@@ -975,7 +1259,7 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                 whileTap={{ scale: 0.95 }}
                 title="Guardar borrador para continuar después"
               >
-                💾 Guardar Borrador
+                Guardar Borrador
               </motion.button>
               <motion.button
                 type="button"
@@ -985,7 +1269,7 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                 whileTap={{ scale: 0.95 }}
                 title="Cargar borrador guardado"
               >
-                📂 Cargar Borrador
+                Cargar Borrador
               </motion.button>
             </div>
             <div className="main-actions">
@@ -1010,6 +1294,262 @@ function NuevoParto({ onClose, onSave, data = [] }) {
           </div>
         </form>
       </motion.div>
+
+      {/* Modal para Segundo Recién Nacido (Gemelar) */}
+      {showGemelarModal && (
+        <motion.div 
+          className="gemelar-modal-overlay"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowGemelarModal(false)
+            }
+          }}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            backdropFilter: 'blur(5px)',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem'
+          }}
+        >
+          <motion.div 
+            className="gemelar-modal"
+            initial={{ scale: 0.9, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, y: 20 }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: '16px',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+              width: '100%',
+              maxWidth: '1000px',
+              maxHeight: '95vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }}
+          >
+            <div style={{
+              background: 'linear-gradient(135deg, #ff6b9d, #ff8fb3)',
+              color: 'white',
+              padding: '1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Datos del Segundo Recién Nacido (Gemelar)</h2>
+              <button 
+                onClick={() => setShowGemelarModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'white',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  padding: '0.25rem 0.5rem',
+                  borderRadius: '4px',
+                  transition: 'background 0.2s'
+                }}
+                onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
+                onMouseLeave={(e) => e.target.style.background = 'none'}
+              >
+                X
+              </button>
+            </div>
+
+            <div style={{
+              padding: '1.5rem',
+              overflowY: 'auto',
+              flex: 1
+            }}>
+              <div className="form-grid">
+                <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: '0.5rem' }}>
+                  <label>Hora de nacimiento 2do RN (Gemelar)</label>
+                  <input type="time" name="horaParto2" value={formData.horaParto2} onChange={handleChange} style={{ maxWidth: '160px' }} />
+                </div>
+                <div className="form-group">
+                  <label>Peso (g)</label>
+                  <input type="number" name="peso2" value={formData.peso2} onChange={handleChange} min="500" max="6000" step="any" />
+                </div>
+                <div className="form-group">
+                  <label>Talla (cm)</label>
+                  <input type="number" name="talla2" value={formData.talla2} onChange={handleChange} min="20" max="60" step="any" placeholder="Ej. 49.5" />
+                </div>
+                <div className="form-group">
+                  <label>CC (cm)</label>
+                  <input type="number" name="cc2" value={formData.cc2} onChange={handleChange} min="20" max="50" step="any" placeholder="Ej. 34.2" />
+                </div>
+                <div className="form-group">
+                  <label>APGAR 1'</label>
+                  <input type="number" name="apgar1_2" value={formData.apgar1_2} onChange={handleChange} min="0" max="10" />
+                </div>
+                <div className="form-group">
+                  <label>APGAR 5'</label>
+                  <input type="number" name="apgar5_2" value={formData.apgar5_2} onChange={handleChange} min="0" max="10" />
+                </div>
+                <div className="form-group">
+                  <label>APGAR 10'</label>
+                  <input type="number" name="apgar10_2" value={formData.apgar10_2} onChange={handleChange} min="0" max="10" />
+                </div>
+                <div className="form-group">
+                  <label>Sexo</label>
+                  <select name="sexo2" value={formData.sexo2} onChange={handleChange}>
+                    <option value="">Seleccione...</option>
+                    <option value="FEMENINO">FEMENINO</option>
+                    <option value="MASCULINO">MASCULINO</option>
+                    <option value="INDETERMINADO">INDETERMINADO</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Malformaciones</label>
+                  <select name="malformaciones2" value={formData.malformaciones2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Médico Obstetra</label>
+                  <input type="text" name="medicoObstetra2" value={formData.medicoObstetra2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Médico Pediatra</label>
+                  <input type="text" name="medicoPediatra2" value={formData.medicoPediatra2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Matrona Preparto</label>
+                  <input type="text" name="matronaPreparto2" value={formData.matronaPreparto2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Matrona Parto</label>
+                  <input type="text" name="matronaParto2" value={formData.matronaParto2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Matrona RN</label>
+                  <input type="text" name="matronaRN2" value={formData.matronaRN2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Acompañamiento Preparto</label>
+                  <select name="acompanamientoPreparto2" value={formData.acompanamientoPreparto2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Acompañamiento Parto</label>
+                  <select name="acompanamientoParto2" value={formData.acompanamientoParto2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Acompañamiento Puerperio Inmediato</label>
+                  <select name="acompanamientoPuerperioInmediato2" value={formData.acompanamientoPuerperioInmediato2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Nombre Acompañante</label>
+                  <input type="text" name="nombreAcompanante2" value={formData.nombreAcompanante2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Parentesco Acompañante respecto a Madre</label>
+                  <input type="text" name="parentescoAcompananteRespectoAMadre2" value={formData.parentescoAcompananteRespectoAMadre2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Apego con Piel &gt;30 min</label>
+                  <select name="apegoConPiel30Min2" value={formData.apegoConPiel30Min2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="MADRE">MADRE</option>
+                    <option value="PADRE">PADRE</option>
+                    <option value="OTRA PERSONA SIGNIFICATIVA">OTRA PERSONA SIGNIFICATIVA</option>
+                  </select>
+                </div>
+                <div className="form-group full-width">
+                  <label>Causa No Apego</label>
+                  <textarea name="causaNoApego2" value={formData.causaNoApego2} onChange={handleChange} rows="2" />
+                </div>
+                <div className="form-group">
+                  <label>Acompañamiento RN</label>
+                  <select name="acompanamientoRN2" value={formData.acompanamientoRN2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Parentesco Acompañante respecto a RN</label>
+                  <input type="text" name="parentescoAcompananteRespectoARN2" value={formData.parentescoAcompananteRespectoARN2} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Lactancia Precoz (60 min de vida)</label>
+                  <select name="lactanciaPrecoz60MinDeVida2" value={formData.lactanciaPrecoz60MinDeVida2} onChange={handleChange}>
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div style={{
+              padding: '1rem 1.5rem',
+              borderTop: '1px solid rgba(255, 182, 193, 0.2)',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '1rem'
+            }}>
+              <motion.button
+                type="button"
+                onClick={() => setShowGemelarModal(false)}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  backgroundColor: '#e0e0e0',
+                  color: '#333',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '600'
+                }}
+              >
+                Cerrar
+              </motion.button>
+              <motion.button
+                type="button"
+                onClick={() => {
+                  setShowGemelarModal(false)
+                }}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: 'linear-gradient(135deg, #ff6b9d, #ff8fb3)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '600'
+                }}
+              >
+                Guardar Datos
+              </motion.button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
     </motion.div>
   )
 }

@@ -42,10 +42,12 @@ export function setUser(user) {
 }
 
 /**
- * Verifica si el usuario está autenticado
+ * Verifica si el usuario está autenticado.
+ * El JWT vive en una cookie httpOnly (no legible por JS); para gating de UI se usa
+ * la presencia del objeto `user`. La autorización real la impone el servidor.
  */
 export function isAuthenticated() {
-  return !!getToken();
+  return !!getUser();
 }
 
 /**
@@ -63,6 +65,38 @@ export function isAdmin() {
   return getUserRole() === 'ADMIN';
 }
 
+/** Nombre para mostrar (trazabilidad de partos) */
+export function getUserDisplayName() {
+  const u = getUser();
+  if (!u) return '';
+  return (u.nombreCompleto || u.username || '').trim();
+}
+
+/**
+ * Perfiles no admin (p. ej. USUARIO / matronería) solo pueden editar partos que ellos registraron.
+ * Se considera propietario del registro al usuario que figura en `registradoPorUsername`
+ * o, como respaldo para registros antiguos, al valor de `creadoPor`.
+ * Registros sin ninguno de esos campos quedan solo para ADMIN.
+ */
+export function puedeEditarParto(parto) {
+  if (!parto) return false;
+  if (isAdmin()) return true;
+  const user = getUser();
+  if (!user?.username) return false;
+  const owner =
+    parto.registradoPorUsername ||
+    parto.registrado_por_username ||
+    parto.createdByUsername ||
+    parto.creadoPor ||
+    parto.creado_por;
+  if (owner == null || owner === '') return false;
+  return String(owner).toLowerCase() === String(user.username).toLowerCase();
+}
+
+export function puedeEliminarParto(parto) {
+  return puedeEditarParto(parto);
+}
+
 /**
  * Inicia sesión
  */
@@ -70,6 +104,7 @@ export async function login(username, password) {
   try {
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -82,7 +117,7 @@ export async function login(username, password) {
     }
 
     const data = await response.json();
-    setToken(data.token);
+    // El JWT viaja en una cookie httpOnly puesta por el servidor; NO se almacena en localStorage.
     setUser(data.user);
     return data;
   } catch (error) {
@@ -96,16 +131,14 @@ export async function login(username, password) {
  */
 export async function logout() {
   try {
-    const token = getToken();
-    if (token) {
-      await fetch(`${API_BASE_URL}/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-    }
+    // La cookie httpOnly se envía automáticamente; el servidor la elimina.
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
   } catch (error) {
     console.error('Error en logout:', error);
   } finally {
@@ -118,15 +151,11 @@ export async function logout() {
  */
 export async function verifyToken() {
   try {
-    const token = getToken();
-    if (!token) {
-      return null;
-    }
-
+    // La cookie httpOnly se envía automáticamente; no se requiere token en JS.
     const response = await fetch(`${API_BASE_URL}/auth/me`, {
       method: 'GET',
+      credentials: 'include',
       headers: {
-        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     });
@@ -147,10 +176,11 @@ export async function verifyToken() {
 }
 
 /**
- * Obtiene el header de autorización para las peticiones
+ * Header de autorización. El JWT ahora viaja en una cookie httpOnly, por lo que
+ * ya no se envía por header. Se mantiene (devolviendo {}) por compatibilidad con
+ * los call sites que lo esparcen en sus `headers`. Usar siempre credentials:'include'.
  */
 export function getAuthHeader() {
-  const token = getToken();
-  return token ? { 'Authorization': `Bearer ${token}` } : {};
+  return {};
 }
 

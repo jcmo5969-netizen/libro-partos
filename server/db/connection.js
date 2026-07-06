@@ -1,9 +1,21 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const { Pool } = pg;
+
+// M10: en producción no se permiten credenciales de BD por defecto ni vacías.
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.DB_USER || !process.env.DB_PASSWORD) {
+    throw new Error(
+      'DB_USER y DB_PASSWORD son obligatorias en producción. Configure credenciales de BD explícitas.'
+    );
+  }
+}
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',

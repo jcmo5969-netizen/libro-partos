@@ -1,0 +1,31 @@
+# Caddy — reverse proxy con HTTPS automático (Let's Encrypt).
+# Uso:  caddy run --config ./deploy/Caddyfile
+# Requisitos: dominio público apuntando al servidor y puertos 80/443 abiertos.
+#
+# Sirve el frontend estático (dist/) y proxya /api y /health al backend Node en :3003.
+# Tras habilitarlo, en el .env del servidor: COOKIE_SECURE=1, ENABLE_HSTS=1, TRUST_PROXY=1, HOST=127.0.0.1
+
+partos.hospital.cl {
+    encode gzip
+
+    # API y health -> backend Node (escuchando solo en localhost).
+    @api path /api/* /health
+    handle @api {
+        reverse_proxy 127.0.0.1:3003
+    }
+
+    # Frontend SPA (build de Vite).
+    handle {
+        root * /ruta/al/proyecto/libro-partos/dist
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Cabeceras de seguridad (HSTS lo añade Caddy con TLS; se refuerza aquí).
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

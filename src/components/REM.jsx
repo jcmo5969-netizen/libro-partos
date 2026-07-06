@@ -1,8 +1,34 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { analyzeDataWithAI } from '../services/aiService'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import './REM.css'
+
+/**
+ * Genera y descarga un .xlsx con exceljs (reemplaza a la librería `xlsx`, sin
+ * parche para sus CVEs de Prototype Pollution / ReDoS).
+ * @param {string} sheetName Nombre de la hoja.
+ * @param {Array<Array>} rows Filas (array de arrays); la primera suele ser el encabezado.
+ * @param {Array<{wch:number}>} cols Anchos de columna estilo `xlsx` (wch); se convierten a width.
+ * @param {string} filename Nombre del archivo a descargar.
+ */
+async function descargarExcelREM(sheetName, rows, cols, filename) {
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet(sheetName)
+  if (Array.isArray(cols)) {
+    ws.columns = cols.map((c) => ({ width: c?.wch ?? 12 }))
+  }
+  ws.addRows(rows)
+  const buffer = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 function REM({ data }) {
   const [selectedMonth, setSelectedMonth] = useState('all')
@@ -152,12 +178,11 @@ function REM({ data }) {
     return str === 'SI' || str === 'SÍ' || str === '1' || str === 'TRUE' || str === 'YES'
   }
 
-  // Función auxiliar para obtener valor de campo con múltiples alternativas
+  const toSnake = (str) => str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
   const getFieldValue = (item, fieldNames, defaultValue = null) => {
     for (const fieldName of fieldNames) {
-      if (item[fieldName] !== null && item[fieldName] !== undefined && item[fieldName] !== '') {
-        return item[fieldName]
-      }
+      const val = item[fieldName] ?? item[toSnake(fieldName)]
+      if (val !== null && val !== undefined && val !== '') return val
     }
     return defaultValue
   }
@@ -172,6 +197,282 @@ function REM({ data }) {
     return filtrados.length
   }
 
+  // Calcula todos los indicadores de la Sección A para una fila (ligadura, apego, lactancia, etc.)
+  const getIndicadoresSeccionA = (row) => {
+    const filtroTipoParto = row.filtro || (() => true)
+    const ligaduraTardia = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const ligadura = getFieldValue(item, ['ligaduraTardiaCordon', 'ligaduraTardia'], null)
+        return typeof ligadura === 'number' ? ligadura === 1 : normalizeBoolean(ligadura, false)
+      },
+      filtroTipoParto
+    )
+    const contactoMadreMenor2500 = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
+        if (!peso || peso > 2499) return false
+        const contactoMadre = getFieldValue(item, ['apegoConPiel30MinMadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) return true
+        if (contactoOriginal && (String(contactoOriginal).toUpperCase().trim() === 'MADRE' || String(contactoOriginal).toUpperCase().trim() === 'SI')) return true
+        return normalizeBoolean(contacto, false)
+      },
+      filtroTipoParto
+    )
+    const contactoMadreMayor2500 = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
+        if (!peso || peso < 2500) return false
+        const contactoMadre = getFieldValue(item, ['apegoConPiel30MinMadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) return true
+        if (contactoOriginal && (String(contactoOriginal).toUpperCase().trim() === 'MADRE' || String(contactoOriginal).toUpperCase().trim() === 'SI')) return true
+        return normalizeBoolean(contacto, false)
+      },
+      filtroTipoParto
+    )
+    const contactoPadreMenor2500 = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
+        if (!peso || peso > 2499) return false
+        const contactoPadre = getFieldValue(item, ['apegoConPiel30MinPadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) return true
+        const parentesco = getFieldValue(item, ['parentescoAcompananteRespectoARN', 'parentescoAcompananteRespectoAMadre'], null)
+        const parentescoUpper = parentesco ? String(parentesco).toUpperCase() : ''
+        const esPadrePorParentesco = parentescoUpper.includes('PADRE') || parentescoUpper.includes('PAREJA')
+        const acompanamiento = getFieldValue(item, ['acompanamientoParto', 'acompanamientoPuerperioInmediato', 'acompanamientoRN'], null)
+        const acompanamientoValido = normalizeBoolean(acompanamiento, false)
+        if (contactoOriginal) {
+          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
+          const esPadreEnApego = contactoUpper === 'PADRE' || contactoUpper === 'OTRA PERSONA SIGNIFICATIVA' || contactoUpper.includes('PADRE')
+          return esPadreEnApego || (acompanamientoValido && esPadrePorParentesco)
+        }
+        return acompanamientoValido && esPadrePorParentesco
+      },
+      filtroTipoParto
+    )
+    const contactoPadreMayor2500 = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
+        if (!peso || peso < 2500) return false
+        const contactoPadre = getFieldValue(item, ['apegoConPiel30MinPadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) return true
+        const parentesco = getFieldValue(item, ['parentescoAcompananteRespectoARN', 'parentescoAcompananteRespectoAMadre'], null)
+        const parentescoUpper = parentesco ? String(parentesco).toUpperCase() : ''
+        const esPadrePorParentesco = parentescoUpper.includes('PADRE') || parentescoUpper.includes('PAREJA')
+        const acompanamiento = getFieldValue(item, ['acompanamientoParto', 'acompanamientoPuerperioInmediato', 'acompanamientoRN'], null)
+        const acompanamientoValido = normalizeBoolean(acompanamiento, false)
+        if (contactoOriginal) {
+          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
+          const esPadreEnApego = contactoUpper === 'PADRE' || contactoUpper === 'OTRA PERSONA SIGNIFICATIVA' || contactoUpper.includes('PADRE')
+          return esPadreEnApego || (acompanamientoValido && esPadrePorParentesco)
+        }
+        return acompanamientoValido && esPadrePorParentesco
+      },
+      filtroTipoParto
+    )
+    const lactancia = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
+        if (!peso || peso < 2500) return false
+        const lactanciaVal = getFieldValue(item, ['lactanciaPrecoz60MinDeVida', 'lactanciaPrecoz', 'lactanciaMaterna'], null)
+        return normalizeBoolean(lactanciaVal, false) && peso >= 2500
+      },
+      filtroTipoParto
+    )
+    const alojamiento = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const alojamientoVal = getFieldValue(item, ['alojamientoConjunto'], null)
+        if (normalizeBoolean(alojamientoVal, false)) return true
+        const destino = getFieldValue(item, ['destino'], null)
+        if (destino) {
+          const destinoUpper = String(destino).toUpperCase().trim()
+          return destinoUpper.includes('SALA') && !destinoUpper.includes('NO')
+        }
+        return false
+      },
+      filtroTipoParto
+    )
+    const pertinenciaCultural = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.atencionConPertinenciaCultural === 'number') {
+          return item.atencionConPertinenciaCultural === 1
+        }
+        return item.atencionConPertinenciaCultural &&
+               String(item.atencionConPertinenciaCultural).toUpperCase() === 'SI'
+      },
+      filtroTipoParto
+    )
+    const pueblosOriginarios = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.puebloOriginario === 'number') {
+          return item.puebloOriginario === 1
+        }
+        return item.puebloOriginario && (String(item.puebloOriginario).toUpperCase() === 'SI' || String(item.puebloOriginario).toUpperCase() === 'SÍ' || item.puebloOriginario === 1)
+      },
+      filtroTipoParto
+    )
+    const migrantes = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.migrante === 'number') {
+          return item.migrante === 1
+        }
+        return item.migrante && (String(item.migrante).toUpperCase() === 'SI' || String(item.migrante).toUpperCase() === 'SÍ' || item.migrante === 1)
+      },
+      filtroTipoParto
+    )
+    const discapacidad = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.discapacidad === 'number') {
+          return item.discapacidad === 1
+        }
+        return item.discapacidad && (String(item.discapacidad).toUpperCase() === 'SI' || String(item.discapacidad).toUpperCase() === 'SÍ' || item.discapacidad === 1)
+      },
+      filtroTipoParto
+    )
+    const privadaLibertad = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.privadaDeLibertad === 'number') {
+          return item.privadaDeLibertad === 1
+        }
+        return item.privadaDeLibertad && (String(item.privadaDeLibertad).toUpperCase() === 'SI' || String(item.privadaDeLibertad).toUpperCase() === 'SÍ' || item.privadaDeLibertad === 1)
+      },
+      filtroTipoParto
+    )
+    const transMasculino = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.transNoBinario === 'number') {
+          return item.transNoBinario === 1
+        }
+        return (item.transNoBinario && String(item.transNoBinario).toUpperCase() === 'SI') ||
+               (item.identidadGenero && String(item.identidadGenero).toUpperCase() === 'TRANS MASCULINO')
+      },
+      filtroTipoParto
+    )
+    const noBinarie = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        return item.identidadGenero && String(item.identidadGenero).toUpperCase() === 'NO BINARIE'
+      },
+      filtroTipoParto
+    )
+
+    // Anestesia / analgesia / oxitocina (cruzados con tipo de parto de la fila)
+    const oxitocinaProf = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const oxitocina = getFieldValue(item, ['conduccionOcitocica', 'oxitocina', 'usoOxitocinaProfilactica'], null)
+        return normalizeBoolean(oxitocina, false)
+      },
+      filtroTipoParto
+    )
+    const anestesiaNeuroaxial = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+        return tipo.includes('NEUROAXIAL') || tipo.includes('EPIDURAL') || tipo.includes('RAQUIDEA') || tipo.includes('PERIDURAL')
+      },
+      filtroTipoParto
+    )
+    const oxidoNitroso = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+        return tipo.includes('ÓXIDO') || tipo.includes('OXIDO') || tipo.includes('NITROSO')
+      },
+      filtroTipoParto
+    )
+    const analgesiaEndovenosa = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+        if (typeof item.manejoFarmacologicoDelDolor === 'number' && item.manejoFarmacologicoDelDolor === 1) {
+          return tipo.includes('ENDOVENOSA') || tipo.includes('ENDOVENOSO')
+        }
+        const manejoFarmacologico = String(item.manejoFarmacologicoDelDolor || '').toUpperCase()
+        return tipo.includes('ENDOVENOSA') || tipo.includes('ENDOVENOSO') || manejoFarmacologico.includes('ENDOVENOSA')
+      },
+      filtroTipoParto
+    )
+    const anestesiaGeneral = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+        return tipo.includes('GENERAL')
+      },
+      filtroTipoParto
+    )
+    const anestesiaLocal = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+        if (typeof item.anestesiaLocal === 'number') {
+          return tipo.includes('LOCAL') || item.anestesiaLocal === 1
+        }
+        const anestesiaLocalVal = String(item.anestesiaLocal || '').toUpperCase()
+        return tipo.includes('LOCAL') || anestesiaLocalVal === 'SI' || anestesiaLocalVal === 'SÍ'
+      },
+      filtroTipoParto
+    )
+    const medidasNoFarmacologicas = calcularIndicadorPorTipo(
+      filteredDataByMonthAndYear,
+      item => {
+        if (typeof item.manejoNoFarmacologicoDelDolor === 'number' && item.manejoNoFarmacologicoDelDolor === 1) {
+          return true
+        }
+        const manejoNoFarmacologico = String(item.manejoNoFarmacologicoDelDolor || item.medidasNoFarmacologicasParaElDolorCuales || '').toUpperCase()
+        const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+        return manejoNoFarmacologico === 'SI' || manejoNoFarmacologico === 'SÍ' ||
+               manejoNoFarmacologico.includes('MOVIMIENTO') || manejoNoFarmacologico.includes('ACOMPAÑAMIENTO') ||
+               tipo.includes('NO FARMACOLOGICA') || tipo.includes('NO FARMACOLÓGICA')
+      },
+      filtroTipoParto
+    )
+
+    return {
+      ligaduraTardia,
+      contactoMadreMenor2500,
+      contactoMadreMayor2500,
+      contactoPadreMenor2500,
+      contactoPadreMayor2500,
+      lactancia,
+      alojamiento,
+      pertinenciaCultural,
+      pueblosOriginarios,
+      migrantes,
+      discapacidad,
+      privadaLibertad,
+      transMasculino,
+      noBinarie,
+      oxitocinaProf,
+      anestesiaNeuroaxial,
+      oxidoNitroso,
+      analgesiaEndovenosa,
+      anestesiaGeneral,
+      anestesiaLocal,
+      medidasNoFarmacologicas
+    }
+  }
+
   const tableData = useMemo(() => {
     const dataToUse = filteredDataByMonthAndYear
     
@@ -179,36 +480,130 @@ function REM({ data }) {
       return {
         seccionA: [],
         seccionA1: [],
+        seccionA2: [],
         seccionD1: [],
+        seccionD2: null,
         seccionB: []
       }
     }
     
-    // Filtrar solo partos vaginales para la sección A.1
+    // Expandir datos para partos gemelares: duplicar el registro cuando hay gemela
+    // para que se cuenten ambos recién nacidos en el REM
+    const expandedData = []
+    dataToUse.forEach(item => {
+      // Siempre agregar el primer recién nacido
+      expandedData.push(item)
+      
+      // Si es gemelar y tiene datos del segundo recién nacido, agregar un registro duplicado
+      // con los datos del segundo recién nacido
+      const esGemelar = item.gemela === 1 || 
+                       String(item.gemela || '').toUpperCase() === 'SI' ||
+                       String(item.gemela || '').toUpperCase() === 'SÍ'
+      
+      if (esGemelar && (item.peso2 || item.talla2 || item.cc2)) {
+        // Crear un registro duplicado con los datos del segundo recién nacido
+        const segundoRN = {
+          ...item,
+          peso: item.peso2 || item.peso,
+          talla: item.talla2 || item.talla,
+          cc: item.cc2 || item.cc,
+          apgar1: item.apgar1_2 || item.apgar1,
+          apgar5: item.apgar5_2 || item.apgar5,
+          apgar10: item.apgar10_2 || item.apgar10,
+          sexo: item.sexo2 || item.sexo,
+          malformaciones: item.malformaciones2 || item.malformaciones,
+          _esSegundoRN: true // Marca para identificar que es el segundo RN
+        }
+        expandedData.push(segundoRN)
+      }
+    })
+    
+    // Usar los datos expandidos para los cálculos
+    const dataForCalculations = expandedData
+    
+    // Filtrar solo partos vaginales para la sección A.1 (usar datos originales, no expandidos)
     const partosVaginales = dataToUse.filter(item => {
       const tipo = String(item.tipoParto || '').toUpperCase()
       return tipo.includes('VAGINAL') && !tipo.includes('INSTRUMENTAL')
     })
     
-    // Función para calcular por semanas de gestación
+    // Función para calcular por semanas de gestación.
+    // TOTAL = <28 + (28–37) + ≥38 solo entre registros con EG numérica válida (cuadra el Excel).
+    const parseEgSemanas = (item) => {
+      const raw = item.eg ?? item.semanasGestacion
+      if (raw === null || raw === undefined || raw === '') return null
+      const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(',', '.'))
+      if (!Number.isFinite(n)) return null
+      return n
+    }
+
+    // Filtros de anestesia/analgesia/oxitocina (compartidos con sección B)
+    const esOxitocinaProfilactica = (item) => {
+      const oxitocina = getFieldValue(item, ['conduccionOcitocica', 'oxitocina', 'usoOxitocinaProfilactica'], null)
+      return normalizeBoolean(oxitocina, false)
+    }
+    const esNeuroaxial = (item) => {
+      const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+      return tipo.includes('NEUROAXIAL') || tipo.includes('EPIDURAL') || tipo.includes('RAQUIDEA') || tipo.includes('PERIDURAL')
+    }
+    const esOxidoNitroso = (item) => {
+      const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+      return tipo.includes('ÓXIDO') || tipo.includes('OXIDO') || tipo.includes('NITROSO')
+    }
+    const esEndovenosa = (item) => {
+      const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+      if (typeof item.manejoFarmacologicoDelDolor === 'number' && item.manejoFarmacologicoDelDolor === 1) {
+        return tipo.includes('ENDOVENOSA') || tipo.includes('ENDOVENOSO')
+      }
+      const manejoFarmacologico = String(item.manejoFarmacologicoDelDolor || '').toUpperCase()
+      return tipo.includes('ENDOVENOSA') || tipo.includes('ENDOVENOSO') || manejoFarmacologico.includes('ENDOVENOSA')
+    }
+    const esGeneral = (item) => {
+      const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+      return tipo.includes('GENERAL')
+    }
+    const esLocal = (item) => {
+      const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+      if (typeof item.anestesiaLocal === 'number') {
+        return tipo.includes('LOCAL') || item.anestesiaLocal === 1
+      }
+      const anestesiaLocal = String(item.anestesiaLocal || '').toUpperCase()
+      return tipo.includes('LOCAL') || anestesiaLocal === 'SI' || anestesiaLocal === 'SÍ'
+    }
+    const esNoFarmacologica = (item) => {
+      if (typeof item.manejoNoFarmacologicoDelDolor === 'number' && item.manejoNoFarmacologicoDelDolor === 1) {
+        return true
+      }
+      const manejoNoFarmacologico = String(item.manejoNoFarmacologicoDelDolor || item.medidasNoFarmacologicasParaElDolorCuales || '').toUpperCase()
+      const tipo = String(item.tipoDeAnestesia || item.tipoAnestesia || '').toUpperCase()
+      return manejoNoFarmacologico === 'SI' || manejoNoFarmacologico === 'SÍ' ||
+             manejoNoFarmacologico.includes('MOVIMIENTO') || manejoNoFarmacologico.includes('ACOMPAÑAMIENTO') ||
+             tipo.includes('NO FARMACOLOGICA') || tipo.includes('NO FARMACOLÓGICA')
+    }
+
     const calcularPorSemanas = (filtro) => {
+      let menos28 = 0, entre28y37 = 0, mas38 = 0
+      let oxitocina = 0, neuroaxial = 0, oxido = 0, endovenosa = 0, general = 0, local = 0, noFarmacologicas = 0
+      for (const item of partosVaginales) {
+        if (!filtro(item)) continue
+        const semanas = parseEgSemanas(item)
+        if (semanas === null) continue
+        if (semanas < 28) menos28++
+        else if (semanas >= 28 && semanas < 38) entre28y37++
+        else mas38++
+
+        if (esOxitocinaProfilactica(item)) oxitocina++
+        if (esNeuroaxial(item)) neuroaxial++
+        if (esOxidoNitroso(item)) oxido++
+        if (esEndovenosa(item)) endovenosa++
+        if (esGeneral(item)) general++
+        if (esLocal(item)) local++
+        if (esNoFarmacologica(item)) noFarmacologicas++
+      }
       return {
-        total: partosVaginales.filter(item => {
-          const semanas = item.eg || item.semanasGestacion
-          return filtro(item) && semanas !== null && semanas !== undefined
-        }).length,
-        menos28: partosVaginales.filter(item => {
-          const semanas = item.eg || item.semanasGestacion
-          return filtro(item) && semanas && semanas < 28
-        }).length,
-        entre28y37: partosVaginales.filter(item => {
-          const semanas = item.eg || item.semanasGestacion
-          return filtro(item) && semanas && semanas >= 28 && semanas < 38
-        }).length,
-        mas38: partosVaginales.filter(item => {
-          const semanas = item.eg || item.semanasGestacion
-          return filtro(item) && semanas && semanas >= 38
-        }).length
+        total: menos28 + entre28y37 + mas38,
+        menos28, entre28y37, mas38,
+        oxitocina, neuroaxial, oxido, endovenosa, general, local, noFarmacologicas
       }
     }
     
@@ -225,30 +620,74 @@ function REM({ data }) {
       })
     })
     
-    // Inducidos - Mecánica
+    // Inducidos - Mecánica (solo mecánica; si tipo es COMBINADA se cuenta en Combinada)
     seccionA1.push({
       label: 'Inducidos',
       subcategory: 'Mecánica',
       ...calcularPorSemanas(item => {
         const induccion = item.induccion
+        const tipoInduccion = String(item.tipoInduccion || '').toUpperCase()
+        const induccionMecanica = String(item.induccionMecanica || '').toUpperCase()
+        const induccionCombinada = String(item.induccionCombinada || '').toUpperCase()
         const comentarios = String(item.comentarios || '').toUpperCase()
         const trabajoParto = String(item.trabajoDeParto || '').toUpperCase()
-        return (induccion === 1 || String(induccion).toUpperCase() === 'SI') &&
-               (comentarios.includes('MECANICA') || trabajoParto.includes('MECANICA') ||
-                comentarios.includes('AMNIOTOMIA') || comentarios.includes('ROTURA ARTIFICIAL'))
+        const esInducido = induccion === 1 || String(induccion).toUpperCase() === 'SI' || String(induccion).toUpperCase() === 'SÍ'
+        if (!esInducido) return false
+        if (tipoInduccion === 'COMBINADA') return false
+        return tipoInduccion === 'MECANICA' ||
+               (induccionMecanica && induccionMecanica !== '') ||
+               induccionCombinada.includes('BALON') || induccionCombinada.includes('SONDA') ||
+               comentarios.includes('MECANICA') || trabajoParto.includes('MECANICA') ||
+               comentarios.includes('AMNIOTOMIA') || comentarios.includes('ROTURA ARTIFICIAL')
       })
     })
     
-    // Inducidos - Farmacológica
+    // Inducidos - Farmacológica (solo farmacológica; si tipo es COMBINADA se cuenta en Combinada)
     seccionA1.push({
       label: 'Inducidos',
       subcategory: 'Farmacológica',
       ...calcularPorSemanas(item => {
         const induccion = item.induccion
+        const tipoInduccion = String(item.tipoInduccion || '').toUpperCase()
+        const induccionFarmacologica = String(item.induccionFarmacologica || '').toUpperCase()
+        const induccionCombinada = String(item.induccionCombinada || '').toUpperCase()
         const comentarios = String(item.comentarios || '').toUpperCase()
-        return (induccion === 1 || String(induccion).toUpperCase() === 'SI') &&
-               (comentarios.includes('MISOTROL') || comentarios.includes('OXITOCINA') ||
-                comentarios.includes('PROSTAGLANDINA') || comentarios.includes('FARMACOLOGICA'))
+        const esInducido = induccion === 1 || String(induccion).toUpperCase() === 'SI' || String(induccion).toUpperCase() === 'SÍ'
+        if (!esInducido) return false
+        if (tipoInduccion === 'COMBINADA') return false
+        return tipoInduccion === 'FARMACOLOGICA' ||
+               (induccionFarmacologica && induccionFarmacologica !== '') ||
+               induccionCombinada.includes('MISOTROL') || induccionCombinada.includes('OXITOCINA') ||
+               comentarios.includes('MISOTROL') || comentarios.includes('OXITOCINA') ||
+               comentarios.includes('PROSTAGLANDINA') || comentarios.includes('FARMACOLOGICA') ||
+               comentarios.includes('DINOPROSTONA')
+      })
+    })
+    
+    // Inducidos - Combinada (tipo "Combinada" en el libro o ambos métodos)
+    seccionA1.push({
+      label: 'Inducidos',
+      subcategory: 'Combinada',
+      ...calcularPorSemanas(item => {
+        const induccion = item.induccion
+        const tipoInduccion = String(item.tipoInduccion || '').toUpperCase()
+        const induccionMecanica = String(item.induccionMecanica || '').toUpperCase()
+        const induccionFarmacologica = String(item.induccionFarmacologica || '').toUpperCase()
+        const induccionCombinada = String(item.induccionCombinada || '').toUpperCase()
+        const comentarios = String(item.comentarios || '').toUpperCase()
+        const trabajoParto = String(item.trabajoDeParto || '').toUpperCase()
+        const esInducido = induccion === 1 || String(induccion).toUpperCase() === 'SI' || String(induccion).toUpperCase() === 'SÍ'
+        if (!esInducido) return false
+        if (tipoInduccion === 'COMBINADA') return true
+        const tieneMecanica = tipoInduccion === 'MECANICA' || (induccionMecanica && induccionMecanica !== '') ||
+          induccionCombinada.includes('BALON') || induccionCombinada.includes('SONDA') ||
+          comentarios.includes('MECANICA') || trabajoParto.includes('MECANICA') ||
+          comentarios.includes('AMNIOTOMIA') || comentarios.includes('ROTURA ARTIFICIAL')
+        const tieneFarmacologica = tipoInduccion === 'FARMACOLOGICA' || (induccionFarmacologica && induccionFarmacologica !== '') ||
+          induccionCombinada.includes('MISOTROL') || induccionCombinada.includes('OXITOCINA') ||
+          comentarios.includes('MISOTROL') || comentarios.includes('OXITOCINA') ||
+          comentarios.includes('PROSTAGLANDINA') || comentarios.includes('FARMACOLOGICA') || comentarios.includes('DINOPROSTONA')
+        return tieneMecanica && tieneFarmacologica
       })
     })
     
@@ -266,57 +705,91 @@ function REM({ data }) {
       label: 'Libertad de movimiento',
       subcategory: null,
       ...calcularPorSemanas(item => {
-        return normalizeBoolean(item.libertadDeMovimientoOEnTDP, false)
+        const val = getFieldValue(item, [
+          'libertadDeMovimientoOEnTDP',
+          'libertad_de_movimiento_o_en_tdp',
+          'libertad_movimiento',
+          'libertadMovimiento'
+        ], null)
+        return normalizeBoolean(val, false)
       })
     })
-    
+
     // Régimen hídrico amplio
     seccionA1.push({
       label: 'Régimen hídrico amplio',
       subcategory: null,
       ...calcularPorSemanas(item => {
-        return normalizeBoolean(item.regimenHidricoAmplioEnTDP, false)
+        const val = getFieldValue(item, [
+          'regimenHidricoAmplioEnTDP',
+          'regimen_hidrico_amplio_en_tdp',
+          'regimenHidrico',
+          'regimen_hidrico'
+        ], null)
+        return normalizeBoolean(val, false)
       })
     })
-    
+
     // Manejo del dolor - No farmacológico
     seccionA1.push({
       label: 'Manejo del dolor',
       subcategory: 'No farmacológico',
       ...calcularPorSemanas(item => {
-        // Verificar tanto el campo booleano como si hay medidas específicas
-        const manejo = normalizeBoolean(item.manejoNoFarmacologicoDelDolor, false)
-        const medidas = getFieldValue(item, ['medidasNoFarmacologicasParaElDolorCuales'], '')
+        const manejo = normalizeBoolean(getFieldValue(item, [
+          'manejoNoFarmacologicoDelDolor',
+          'manejo_no_farmacologico_del_dolor',
+          'manejoNoFarmacologico'
+        ], null), false)
+        const medidas = getFieldValue(item, [
+          'medidasNoFarmacologicasParaElDolorCuales',
+          'medidas_no_farmacologicas_para_el_dolor_cuales',
+          'medidasNoFarmacologicas'
+        ], '')
         return manejo || (medidas && String(medidas).trim().length > 0)
       })
     })
-    
+
     // Manejo del dolor - Farmacológico
     seccionA1.push({
       label: 'Manejo del dolor',
       subcategory: 'Farmacológico',
       ...calcularPorSemanas(item => {
-        return normalizeBoolean(item.manejoFarmacologicoDelDolor, false)
+        return normalizeBoolean(getFieldValue(item, [
+          'manejoFarmacologicoDelDolor',
+          'manejo_farmacologico_del_dolor',
+          'manejoFarmacologico'
+        ], null), false)
       })
     })
-    
+
     // Posición al momento del expulsivo - Litotomía
     seccionA1.push({
       label: 'Posición al momento del expulsivo',
       subcategory: 'Litotomía',
       ...calcularPorSemanas(item => {
-        const posicion = String(item.posicionMaternaEnElExpulsivo || '').toUpperCase()
-        return posicion.includes('LITOTOMIA') || posicion.includes('LITOTOMÍA')
+        const posicion = String(getFieldValue(item, [
+          'posicionMaternaEnElExpulsivo',
+          'posicion_materna_en_el_expulsivo',
+          'posicionExpulsivo',
+          'posicion_expulsivo'
+        ], '') || '').toUpperCase()
+        return posicion.includes('LITOTOMIA') || posicion.includes('LITOTOMÍA') || posicion.includes('DORSAL')
       })
     })
-    
+
     // Posición al momento del expulsivo - Otras posiciones
     seccionA1.push({
       label: 'Posición al momento del expulsivo',
       subcategory: 'Otras posiciones',
       ...calcularPorSemanas(item => {
-        const posicion = String(item.posicionMaternaEnElExpulsivo || '').toUpperCase()
-        return posicion.length > 0 && !posicion.includes('LITOTOMIA') && !posicion.includes('LITOTOMÍA')
+        const posicion = String(getFieldValue(item, [
+          'posicionMaternaEnElExpulsivo',
+          'posicion_materna_en_el_expulsivo',
+          'posicionExpulsivo',
+          'posicion_expulsivo'
+        ], '') || '').toUpperCase()
+        return posicion.length > 0 &&
+               !posicion.includes('LITOTOMIA') && !posicion.includes('LITOTOMÍA') && !posicion.includes('DORSAL')
       })
     })
     
@@ -325,7 +798,7 @@ function REM({ data }) {
       label: 'Episiotomía',
       subcategory: null,
       ...calcularPorSemanas(item => {
-        return normalizeBoolean(item.episiotomia, false)
+        return normalizeBoolean(getFieldValue(item, ['episiotomia'], null), false)
       })
     })
     
@@ -334,7 +807,7 @@ function REM({ data }) {
       label: 'Acompañamiento',
       subcategory: 'Durante el trabajo de parto',
       ...calcularPorSemanas(item => {
-        return normalizeBoolean(item.acompanamientoParto, false)
+        return normalizeBoolean(getFieldValue(item, ['acompanamientoParto'], null), false)
       })
     })
     
@@ -343,9 +816,8 @@ function REM({ data }) {
       label: 'Acompañamiento',
       subcategory: 'Sólo en el expulsivo',
       ...calcularPorSemanas(item => {
-        // Solo en expulsivo = NO en parto pero SÍ en puerperio
-        const acompanamientoParto = normalizeBoolean(item.acompanamientoParto, false)
-        const acompanamientoPuerperio = normalizeBoolean(item.acompanamientoPuerperioInmediato, false)
+        const acompanamientoParto = normalizeBoolean(getFieldValue(item, ['acompanamientoParto'], null), false)
+        const acompanamientoPuerperio = normalizeBoolean(getFieldValue(item, ['acompanamientoPuerperioInmediato'], null), false)
         return !acompanamientoParto && acompanamientoPuerperio
       })
     })
@@ -359,10 +831,10 @@ function REM({ data }) {
       const total = filtrados.length
       
       const porEdad = {
-        menos15: filtrados.filter(item => item.edad && item.edad < 15).length,
-        entre15y19: filtrados.filter(item => item.edad && item.edad >= 15 && item.edad <= 19).length,
-        entre20y34: filtrados.filter(item => item.edad && item.edad >= 20 && item.edad <= 34).length,
-        mas35: filtrados.filter(item => item.edad && item.edad >= 35).length
+        menos15: filtrados.filter(item => item.edad != null && item.edad < 15).length,
+        entre15y19: filtrados.filter(item => item.edad != null && item.edad >= 15 && item.edad <= 19).length,
+        entre20y34: filtrados.filter(item => item.edad != null && item.edad >= 20 && item.edad <= 34).length,
+        mas35: filtrados.filter(item => item.edad != null && item.edad >= 35).length
       }
       
       const porPrematuridad = {
@@ -442,9 +914,9 @@ function REM({ data }) {
       return normalizeBoolean(item.planDeParto, false)
     }))
     
-    // Entrega de placenta a solicitud
+    // Entrega de placenta a solicitud (el libro no registra este dato; no usar alumbramientoConducido)
     filasDetalle.push(crearFilaConFiltro('Entrega de placenta a solicitud', item => {
-      const entrega = getFieldValue(item, ['alumbramientoConducido', 'entregaPlacenta'], null)
+      const entrega = getFieldValue(item, ['entregaPlacenta', 'entregaPlacentaASolicitud'], null)
       return normalizeBoolean(entrega, false)
     }))
     
@@ -489,8 +961,10 @@ function REM({ data }) {
     const seccionB = []
     
     // Función auxiliar para calcular estadísticas de indicadores
-    const calcularIndicador = (filtro) => {
-      const filtrados = dataToUse.filter(filtro)
+    // Usar datos expandidos cuando se cuenta por recién nacido (peso, talla, etc.)
+    const calcularIndicador = (filtro, usarDatosExpandidos = false) => {
+      const datosAUsar = usarDatosExpandidos ? dataForCalculations : dataToUse
+      const filtrados = datosAUsar.filter(filtro)
       return filtrados.length
     }
     
@@ -577,128 +1051,93 @@ function REM({ data }) {
       })
     })
     
-    // Ligadura tardía del cordón
+    // Ligadura tardía del cordón (acepta camelCase y snake_case del backend)
     seccionB.push({
       label: 'Ligadura tardía del cordón (> a 60 segundos)',
       total: calcularIndicador(item => {
-        // Ahora es numérico: 1 = SI, 0 = NO
-        const ligadura = item.ligaduraTardiaCordon || item.ligaduraTardia
-        if (typeof ligadura === 'number') {
-          return ligadura === 1
-        }
-        return ligadura && (String(ligadura).toUpperCase() === 'SI' || String(ligadura).toUpperCase() === 'SÍ' || ligadura === 1)
+        const ligadura = getFieldValue(item, ['ligaduraTardiaCordon', 'ligaduraTardia'], null)
+        if (typeof ligadura === 'number') return ligadura === 1
+        return normalizeBoolean(ligadura, false)
       })
     })
     
     // Contacto Piel a Piel - Con la Madre - RN ≤ 2,499 grs.
-    // apegoConPiel30Min ahora es numérico: 0=NO, 1=MADRE, 2=PADRE, 3=OTRA PERSONA
-    // También tenemos apegoConPiel30MinMadre = 1 si es con madre
+    // Libro registra apegoConPiel30Min como SI/NO; SI = con madre (no hay desglose madre/padre en formulario)
     seccionB.push({
       label: 'CONTACTO INMEDIATO PIEL A PIEL >30 MINUTOS - Con la Madre - RN peso menor o igual a 2.499 grs.',
       total: calcularIndicador(item => {
-        const peso = item.peso
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
         if (!peso || peso > 2499) return false
-        // Verificar apegoConPiel30MinMadre (numérico) o apegoConPiel30Min original
-        const contactoMadre = item.apegoConPiel30MinMadre === 1
-        const contacto = item.apegoConPiel30Min
-        const contactoOriginal = item.apegoConPiel30MinOriginal
-        // Si es numérico, verificar si es 1 (MADRE)
-        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) {
-          return peso <= 2499
-        }
-        // Compatibilidad con valores string antiguos
-        if (contactoOriginal) {
-          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
-          return (contactoUpper === 'MADRE' || contactoUpper === 'SI' || contactoUpper === 'SÍ') && peso <= 2499
-        }
-        return false
-      })
+        const contactoMadre = getFieldValue(item, ['apegoConPiel30MinMadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) return true
+        if (contactoOriginal && (String(contactoOriginal).toUpperCase().trim() === 'MADRE' || String(contactoOriginal).toUpperCase().trim() === 'SI')) return true
+        return normalizeBoolean(contacto, false)
+      }, true)
     })
     
     // Contacto Piel a Piel - Con la Madre - RN ≥ 2,500 grs.
     seccionB.push({
       label: 'CONTACTO INMEDIATO PIEL A PIEL >30 MINUTOS - Con la Madre - RN con peso de 2.500 grs. o más',
       total: calcularIndicador(item => {
-        const peso = item.peso
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
         if (!peso || peso < 2500) return false
-        // Verificar apegoConPiel30MinMadre (numérico) o apegoConPiel30Min original
-        const contactoMadre = item.apegoConPiel30MinMadre === 1
-        const contacto = item.apegoConPiel30Min
-        const contactoOriginal = item.apegoConPiel30MinOriginal
-        // Si es numérico, verificar si es 1 (MADRE)
-        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) {
-          return peso >= 2500
-        }
-        // Compatibilidad con valores string antiguos
-        if (contactoOriginal) {
-          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
-          return (contactoUpper === 'MADRE' || contactoUpper === 'SI' || contactoUpper === 'SÍ') && peso >= 2500
-        }
-        return false
-      })
+        const contactoMadre = getFieldValue(item, ['apegoConPiel30MinMadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) return true
+        if (contactoOriginal && (String(contactoOriginal).toUpperCase().trim() === 'MADRE' || String(contactoOriginal).toUpperCase().trim() === 'SI')) return true
+        return normalizeBoolean(contacto, false)
+      }, true)
     })
     
     // Contacto Piel a Piel - Con el padre - RN ≤ 2,499 grs.
-    // apegoConPiel30MinPadre = 1 si es con padre/acompañante
     seccionB.push({
       label: 'CONTACTO INMEDIATO PIEL A PIEL >30 MINUTOS - Con el padre o acompañante significativo - RN peso menor o igual a 2.499 grs.',
       total: calcularIndicador(item => {
-        const peso = item.peso
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
         if (!peso || peso > 2499) return false
-        // Verificar apegoConPiel30MinPadre (numérico) o apegoConPiel30Min = 2 o 3
-        const contactoPadre = item.apegoConPiel30MinPadre === 1
-        const contacto = item.apegoConPiel30Min
-        const contactoOriginal = item.apegoConPiel30MinOriginal
-        // Si es numérico, verificar si es 2 (PADRE) o 3 (OTRA PERSONA)
-        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) {
-          return peso <= 2499
-        }
-        // O verificar por parentesco y acompañamiento
-        const parentesco = item.parentescoAcompananteRespectoARN || item.parentescoAcompananteRespectoAMadre
+        const contactoPadre = getFieldValue(item, ['apegoConPiel30MinPadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) return true
+        const parentesco = getFieldValue(item, ['parentescoAcompananteRespectoARN', 'parentescoAcompananteRespectoAMadre'], null)
         const parentescoUpper = parentesco ? String(parentesco).toUpperCase() : ''
         const esPadrePorParentesco = parentescoUpper.includes('PADRE') || parentescoUpper.includes('PAREJA')
-        const acompanamiento = item.acompanamientoParto || item.acompanamientoPuerperioInmediato || item.acompanamientoRN
-        const acompanamientoValido = (typeof acompanamiento === 'number' && acompanamiento === 1) || 
-                                      (acompanamiento && String(acompanamiento).toUpperCase() === 'SI')
-        // Compatibilidad con valores string antiguos
+        const acompanamiento = getFieldValue(item, ['acompanamientoParto', 'acompanamientoPuerperioInmediato', 'acompanamientoRN'], null)
+        const acompanamientoValido = normalizeBoolean(acompanamiento, false)
         if (contactoOriginal) {
           const contactoUpper = String(contactoOriginal).toUpperCase().trim()
           const esPadreEnApego = contactoUpper === 'PADRE' || contactoUpper === 'OTRA PERSONA SIGNIFICATIVA' || contactoUpper.includes('PADRE')
-          return (esPadreEnApego || (acompanamientoValido && esPadrePorParentesco)) && peso <= 2499
+          return (esPadreEnApego || (acompanamientoValido && esPadrePorParentesco))
         }
-        return (acompanamientoValido && esPadrePorParentesco) && peso <= 2499
-      })
+        return acompanamientoValido && esPadrePorParentesco
+      }, true)
     })
     
     // Contacto Piel a Piel - Con el padre - RN ≥ 2,500 grs.
     seccionB.push({
       label: 'CONTACTO INMEDIATO PIEL A PIEL >30 MINUTOS - Con el padre o acompañante significativo - RN con peso de 2.500 grs. o más',
       total: calcularIndicador(item => {
-        const peso = item.peso
+        const peso = parseFloat(item.peso) || parseFloat(item.peso2)
         if (!peso || peso < 2500) return false
-        // Verificar apegoConPiel30MinPadre (numérico) o apegoConPiel30Min = 2 o 3
-        const contactoPadre = item.apegoConPiel30MinPadre === 1
-        const contacto = item.apegoConPiel30Min
-        const contactoOriginal = item.apegoConPiel30MinOriginal
-        // Si es numérico, verificar si es 2 (PADRE) o 3 (OTRA PERSONA)
-        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) {
-          return peso >= 2500
-        }
-        // O verificar por parentesco y acompañamiento
-        const parentesco = item.parentescoAcompananteRespectoARN || item.parentescoAcompananteRespectoAMadre
+        const contactoPadre = getFieldValue(item, ['apegoConPiel30MinPadre'], null) === 1
+        const contacto = getFieldValue(item, ['apegoConPiel30Min'], null)
+        const contactoOriginal = getFieldValue(item, ['apegoConPiel30MinOriginal'], null)
+        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) return true
+        const parentesco = getFieldValue(item, ['parentescoAcompananteRespectoARN', 'parentescoAcompananteRespectoAMadre'], null)
         const parentescoUpper = parentesco ? String(parentesco).toUpperCase() : ''
         const esPadrePorParentesco = parentescoUpper.includes('PADRE') || parentescoUpper.includes('PAREJA')
-        const acompanamiento = item.acompanamientoParto || item.acompanamientoPuerperioInmediato || item.acompanamientoRN
-        const acompanamientoValido = (typeof acompanamiento === 'number' && acompanamiento === 1) || 
-                                      (acompanamiento && String(acompanamiento).toUpperCase() === 'SI')
-        // Compatibilidad con valores string antiguos
+        const acompanamiento = getFieldValue(item, ['acompanamientoParto', 'acompanamientoPuerperioInmediato', 'acompanamientoRN'], null)
+        const acompanamientoValido = normalizeBoolean(acompanamiento, false)
         if (contactoOriginal) {
           const contactoUpper = String(contactoOriginal).toUpperCase().trim()
           const esPadreEnApego = contactoUpper === 'PADRE' || contactoUpper === 'OTRA PERSONA SIGNIFICATIVA' || contactoUpper.includes('PADRE')
-          return (esPadreEnApego || (acompanamientoValido && esPadrePorParentesco)) && peso >= 2500
+          return (esPadreEnApego || (acompanamientoValido && esPadrePorParentesco))
         }
-        return (acompanamientoValido && esPadrePorParentesco) && peso >= 2500
-      })
+        return acompanamientoValido && esPadrePorParentesco
+      }, true)
     })
     
     // Lactancia materna en los primeros 60 minutos (RN ≥ 2,500 grs.)
@@ -709,19 +1148,16 @@ function REM({ data }) {
         if (!peso || peso < 2500) return false
         const lactancia = getFieldValue(item, ['lactanciaPrecoz60MinDeVida', 'lactanciaPrecoz', 'lactanciaMaterna'], null)
         return normalizeBoolean(lactancia, false) && peso >= 2500
-      })
+      }, true) // Usar datos expandidos para contar ambos recién nacidos
     })
     
     // Alojamiento conjunto
     seccionB.push({
       label: 'Alojamiento conjunto en puerperio inmediato',
       total: calcularIndicador(item => {
-        // Primero verificar el campo directo
-        const alojamiento = normalizeBoolean(item.alojamientoConjunto, false)
-        if (alojamiento) return true
-        
-        // Si no está en el campo directo, inferir de destino
-        const destino = item.destino
+        const alojamiento = getFieldValue(item, ['alojamientoConjunto'], null)
+        if (normalizeBoolean(alojamiento, false)) return true
+        const destino = getFieldValue(item, ['destino'], null)
         if (destino) {
           const destinoUpper = String(destino).toUpperCase().trim()
           return destinoUpper.includes('SALA') && !destinoUpper.includes('NO')
@@ -731,23 +1167,15 @@ function REM({ data }) {
     })
     
     // Atención con pertinencia cultural
+    // Solo contar registros donde explícitamente se marcó atención con pertinencia cultural = SI
     seccionB.push({
       label: 'Atención con pertinencia cultural',
       total: calcularIndicador(item => {
-        // Ahora son numéricos: 1 = SI, 0 = NO
-        const atencion = typeof item.atencionConPertinenciaCultural === 'number' ? item.atencionConPertinenciaCultural === 1 : 
-                        item.atencionConPertinenciaCultural && String(item.atencionConPertinenciaCultural).toUpperCase() === 'SI'
-        const pueblo = typeof item.puebloOriginario === 'number' ? item.puebloOriginario === 1 : 
-                      item.puebloOriginario && String(item.puebloOriginario).toUpperCase() === 'SI'
-        const migrante = typeof item.migrante === 'number' ? item.migrante === 1 : 
-                        item.migrante && String(item.migrante).toUpperCase() === 'SI'
-        const discapacidad = typeof item.discapacidad === 'number' ? item.discapacidad === 1 : 
-                            item.discapacidad && String(item.discapacidad).toUpperCase() === 'SI'
-        const privada = typeof item.privadaDeLibertad === 'number' ? item.privadaDeLibertad === 1 : 
-                       item.privadaDeLibertad && String(item.privadaDeLibertad).toUpperCase() === 'SI'
-        const trans = typeof item.transNoBinario === 'number' ? item.transNoBinario === 1 : 
-                      item.transNoBinario && String(item.transNoBinario).toUpperCase() === 'SI'
-        return atencion || pueblo || migrante || discapacidad || privada || trans
+        if (typeof item.atencionConPertinenciaCultural === 'number') {
+          return item.atencionConPertinenciaCultural === 1
+        }
+        return item.atencionConPertinenciaCultural &&
+               String(item.atencionConPertinenciaCultural).toUpperCase() === 'SI'
       })
     })
     
@@ -812,46 +1240,46 @@ function REM({ data }) {
     // Sección D.1: Información General de Recién Nacidos Vivos
     const seccionD1 = []
     
-    // Función para calcular por peso
+    // Función para calcular por peso (usar datos expandidos para contar ambos recién nacidos en gemelares)
     const calcularPorPeso = (filtro) => {
       return {
-        total: dataToUse.filter(item => {
+        total: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null
         }).length,
-        menos500: dataToUse.filter(item => {
+        menos500: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso < 500
         }).length,
-        entre500y999: dataToUse.filter(item => {
+        entre500y999: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 500 && peso < 1000
         }).length,
-        entre1000y1499: dataToUse.filter(item => {
+        entre1000y1499: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 1000 && peso < 1500
         }).length,
-        entre1500y1999: dataToUse.filter(item => {
+        entre1500y1999: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 1500 && peso < 2000
         }).length,
-        entre2000y2499: dataToUse.filter(item => {
+        entre2000y2499: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 2000 && peso < 2500
         }).length,
-        entre2500y2999: dataToUse.filter(item => {
+        entre2500y2999: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 2500 && peso < 3000
         }).length,
-        entre3000y3999: dataToUse.filter(item => {
+        entre3000y3999: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 3000 && peso < 4000
         }).length,
-        mas4000: dataToUse.filter(item => {
+        mas4000: dataForCalculations.filter(item => {
           const peso = item.peso ? parseFloat(item.peso) : null
           return filtro(item) && peso !== null && peso >= 4000
         }).length,
-        anomaliaCongenita: dataToUse.filter(item => {
+        anomaliaCongenita: dataForCalculations.filter(item => {
           const malformaciones = item.malformaciones
           const comentarios = String(item.comentarios || '').toUpperCase()
           return filtro(item) && (
@@ -865,133 +1293,189 @@ function REM({ data }) {
     
     // Nacidos vivos (todos los registros)
     seccionD1.push(calcularPorPeso(() => true))
-    
-    return { seccionA, seccionA1, seccionD1, seccionB }
+
+    // ─────────────────────────────────────────────
+    // Sección A.2: Cesáreas según Modelo de Robson
+    // ─────────────────────────────────────────────
+    const esCesareaProg = item => String(item.tipoParto || '').toUpperCase().includes('CES ELE')
+    const esCesareaUrg  = item => String(item.tipoParto || '').toUpperCase().includes('CES URG')
+    const esCesarea     = item => esCesareaProg(item) || esCesareaUrg(item)
+
+    // Derivar grupo Robson: usa clasificacionRobson si existe, si no calcula
+    const getRobsonGroup = (item) => {
+      if (item.clasificacionRobson) {
+        const r = String(item.clasificacionRobson).toUpperCase()
+        if (r.includes('GRUPO 1') || r === '1') return 1
+        if (r.includes('GRUPO 2') || r === '2') return 2
+        if (r.includes('GRUPO 3') || r === '3') return 3
+        if (r.includes('GRUPO 4') || r === '4') return 4
+        if (r.includes('GRUPO 5') || r === '5') return 5
+        if (r.includes('GRUPO 6') || r === '6') return 6
+        if (r.includes('GRUPO 7') || r === '7') return 7
+        if (r.includes('GRUPO 8') || r === '8') return 8
+        if (r.includes('GRUPO 9') || r === '9') return 9
+        if (r.includes('GRUPO 10') || r === '10') return 10
+      }
+      // Derivar desde otros campos
+      const paridad = String(item.paridad || '').toUpperCase()
+      const pres    = String(item.presentacion || '').toUpperCase()
+      const eg      = parseFloat(item.eg) || 0
+      const isNul   = paridad.includes('PRIMIPARA') || paridad.includes('NULIPARA')
+      const isMul   = paridad.includes('MULTIPARA')
+      const isCef   = pres.includes('CEFALICA')
+      const isPod   = pres.includes('PODALICA')
+      const isTrans = pres.includes('TRANSVERSA') || pres.includes('OBLICUA')
+      const isGem   = item.gemela === 1 || String(item.gemela || '').toUpperCase() === 'SI'
+      const hasCCA  = item.cca === 1 || String(item.cca || '').toUpperCase() === 'SI'
+      const isTermino = eg >= 37
+      const isInducido = item.induccion === 1 || String(item.induccion || '').toUpperCase() === 'SI'
+
+      if (isGem) return 8
+      if (isTrans) return 9
+      if (!isTermino && isCef) return 10
+      if (isPod && isNul) return 6
+      if (isPod && isMul) return 7
+      if (isNul && isCef && isTermino && !isInducido) return 1
+      if (isNul && isCef && isTermino && isInducido) return 2
+      if (isMul && !hasCCA && isCef && isTermino && !isInducido) return 3
+      if (isMul && !hasCCA && isCef && isTermino && isInducido) return 4
+      if (isMul && hasCCA && isCef && isTermino) return 5
+      return null
+    }
+
+    const contarRobson = (grupoPred) => ({
+      programada: dataToUse.filter(item => esCesarea(item) && esCesareaProg(item) && grupoPred(item)).length,
+      urgencia:   dataToUse.filter(item => esCesarea(item) && esCesareaUrg(item)  && grupoPred(item)).length,
+    })
+
+    const seccionA2 = [
+      {
+        label: 'Grupo 1: Nulíparas, embarazo único, cefálica, ≥37 sem, TDP espontáneo',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 1)
+      },
+      {
+        label: 'Grupo 2: Nulíparas, embarazo único, cefálica, ≥37 sem, cesárea programada o inducción',
+        subcategory: 'Cesárea por inducción fracasada',
+        programada: 0,
+        urgencia: dataToUse.filter(item => esCesarea(item) && esCesareaUrg(item) && getRobsonGroup(item) === 2 && (item.induccion === 1 || String(item.induccion || '').toUpperCase() === 'SI')).length
+      },
+      {
+        label: 'Grupo 2: Nulíparas, embarazo único, cefálica, ≥37 sem, cesárea programada o inducción',
+        subcategory: 'Cesárea programada',
+        programada: dataToUse.filter(item => esCesarea(item) && esCesareaProg(item) && getRobsonGroup(item) === 2).length,
+        urgencia: 0
+      },
+      {
+        label: 'Grupo 3: Multípara, sin cesárea previa, embarazo único, cefálica, ≥37 sem, TDP espontáneo',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 3)
+      },
+      {
+        label: 'Grupo 4: Multípara, sin cesárea previa, embarazo único, cefálica, ≥37 sem, inducción/programada',
+        subcategory: 'Cesárea por inducción fracasada',
+        programada: 0,
+        urgencia: dataToUse.filter(item => esCesarea(item) && esCesareaUrg(item) && getRobsonGroup(item) === 4 && (item.induccion === 1 || String(item.induccion || '').toUpperCase() === 'SI')).length
+      },
+      {
+        label: 'Grupo 4: Multípara, sin cesárea previa, embarazo único, cefálica, ≥37 sem, inducción/programada',
+        subcategory: 'Cesárea programada',
+        programada: dataToUse.filter(item => esCesarea(item) && esCesareaProg(item) && getRobsonGroup(item) === 4).length,
+        urgencia: 0
+      },
+      {
+        label: 'Grupo 5: Multíparas con ≥1 cesárea previa, embarazo único, cefálica, ≥37 sem',
+        subcategory: '5.1: con 1 cesárea previa',
+        ...contarRobson(item => getRobsonGroup(item) === 5)
+      },
+      {
+        label: 'Grupo 5: Multíparas con ≥1 cesárea previa, embarazo único, cefálica, ≥37 sem',
+        subcategory: '5.2: 2 o más cesáreas previas',
+        programada: 0,
+        urgencia: 0
+      },
+      {
+        label: 'Grupo 6: Nulíparas, embarazo único, podálica',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 6)
+      },
+      {
+        label: 'Grupo 7: Multíparas, embarazo único, podálica, con 1 o más cesáreas previas',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 7)
+      },
+      {
+        label: 'Grupo 8: Todas las mujeres con embarazo múltiple, incluidas las que tienen 1 o más cesáreas previas',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 8)
+      },
+      {
+        label: 'Grupo 9: Embarazo único, transverso y oblicuo, incluidas las que tienen una o más cesáreas previas',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 9)
+      },
+      {
+        label: 'Grupo 10: Todas las mujeres con embarazo único, cefálica, <37 sem, incluidas las que tienen 1 o más cesáreas',
+        subcategory: null,
+        ...contarRobson(item => getRobsonGroup(item) === 10)
+      },
+      {
+        label: 'Total cesáreas por requerimiento materno',
+        subcategory: 'Nulípara',
+        programada: dataToUse.filter(item => esCesarea(item) && esCesareaProg(item) && (String(item.paridad || '').toUpperCase().includes('PRIMIPARA') || String(item.paridad || '').toUpperCase().includes('NULIPARA')) && String(item.causaCesarea || '').toUpperCase().includes('MATERNO')).length,
+        urgencia: dataToUse.filter(item => esCesarea(item) && esCesareaUrg(item) && (String(item.paridad || '').toUpperCase().includes('PRIMIPARA') || String(item.paridad || '').toUpperCase().includes('NULIPARA')) && String(item.causaCesarea || '').toUpperCase().includes('MATERNO')).length
+      },
+      {
+        label: 'Total cesáreas por requerimiento materno',
+        subcategory: 'Multípara',
+        programada: dataToUse.filter(item => esCesarea(item) && esCesareaProg(item) && String(item.paridad || '').toUpperCase().includes('MULTIPARA') && String(item.causaCesarea || '').toUpperCase().includes('MATERNO')).length,
+        urgencia: dataToUse.filter(item => esCesarea(item) && esCesareaUrg(item) && String(item.paridad || '').toUpperCase().includes('MULTIPARA') && String(item.causaCesarea || '').toUpperCase().includes('MATERNO')).length
+      },
+      {
+        label: 'Acompañamiento durante la cesárea',
+        subcategory: null,
+        programada: dataToUse.filter(item => esCesareaProg(item) && normalizeBoolean(item.acompanamientoParto, false)).length,
+        urgencia:   dataToUse.filter(item => esCesareaUrg(item)  && normalizeBoolean(item.acompanamientoParto, false)).length,
+      }
+    ]
+
+    // ─────────────────────────────────────────────────────
+    // Sección D.2: Atención Inmediata del Recién Nacido
+    // ─────────────────────────────────────────────────────
+    const calcD2 = (filtro) => dataForCalculations.filter(filtro).length
+
+    const seccionD2 = {
+      lesionesVaginal: calcD2(item => {
+        const tipo = String(item.tipoParto || '').toUpperCase()
+        return tipo.includes('VAGINAL') && !tipo.includes('INSTRUMENTAL')
+      }),
+      lesionesInstrumental: calcD2(item => String(item.tipoParto || '').toUpperCase().includes('INSTRUMENTAL')),
+      lesionesCesarea: calcD2(item => String(item.tipoParto || '').toUpperCase().includes('CES')),
+      lesionesExtrahospitalario: calcD2(item => {
+        const tipo = String(item.tipoParto || '').toUpperCase()
+        return tipo.includes('EXTRAHOSPITALARIO') || tipo.includes('PREHOSPITALARIO')
+      }),
+      // APGAR según criterios REM: ≤3 al minuto 1; ≤6 al minuto 5
+      apgar3min1: calcD2(item => {
+        const a = getFieldValue(item, ['apgar1', 'apgar_1'], null)
+        if (a === null || a === undefined || a === '') return false
+        const n = Number(a)
+        return !Number.isNaN(n) && n <= 3
+      }),
+      apgar6min5: calcD2(item => {
+        const a = getFieldValue(item, ['apgar5', 'apgar_5'], null)
+        if (a === null || a === undefined || a === '') return false
+        const n = Number(a)
+        return !Number.isNaN(n) && n <= 6
+      }),
+    }
+
+    return { seccionA, seccionA1, seccionA2, seccionD1, seccionD2, seccionB }
   }, [filteredDataByMonthAndYear])
 
-  const [mappingAnalysis, setMappingAnalysis] = useState(null)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-
-  // Función para analizar mapeo con IA
-  const analyzeMapping = async () => {
-    setIsAnalyzing(true)
-    try {
-      // Tomar una muestra de datos para análisis
-      const sample = data.slice(0, 10).map(item => {
-        const relevantFields = {
-          tipoParto: item.tipoParto,
-          conduccionOcitocica: item.conduccionOcitocica,
-          tipoDeAnestesia: item.tipoDeAnestesia,
-          apegoConPiel30Min: item.apegoConPiel30Min,
-          lactanciaPrecoz60MinDeVida: item.lactanciaPrecoz60MinDeVida,
-          acompanamientoParto: item.acompanamientoParto,
-          parentescoAcompananteRespectoARN: item.parentescoAcompananteRespectoARN,
-          destino: item.destino,
-          planDeParto: item.planDeParto,
-          embControlado: item.embControlado
-        }
-        return relevantFields
-      })
-
-      const prompt = `Analiza estos datos de partos y sugiere mejoras en el mapeo de campos para el componente REM (Registro Estadístico Mensual).
-
-Datos de muestra:
-${JSON.stringify(sample, null, 2)}
-
-Campos disponibles en el dataParser:
-- conduccionOcitocica (para oxitocina)
-- tipoDeAnestesia (para anestesia)
-- apegoConPiel30Min (para contacto piel a piel)
-- lactanciaPrecoz60MinDeVida (para lactancia)
-- acompanamientoParto, acompanamientoPuerperioInmediato (para acompañamiento)
-- parentescoAcompananteRespectoARN, parentescoAcompananteRespectoAMadre (para parentesco)
-- destino (para alojamiento conjunto)
-- planDeParto, embControlado (para características del parto)
-
-Sugiere:
-1. Qué campos adicionales del dataParser deberían usarse
-2. Cómo mejorar la detección de valores (ej: "SI", "SÍ", "Sala", etc.)
-3. Si hay campos que no se están mapeando correctamente
-
-Responde en español de forma concisa y técnica.`
-
-      const analysis = await analyzeDataWithAI(data, prompt)
-      setMappingAnalysis(analysis)
-    } catch (error) {
-      console.error('Error analizando mapeo:', error)
-    } finally {
-      setIsAnalyzing(false)
-    }
-  }
-
-  // Función para formatear el análisis de mapeo
-  const formatMappingAnalysis = (text) => {
-    if (!text) return ''
-    
-    let html = text
-    
-    // Procesar encabezados
-    html = html.replace(/^###\s+(.+)$/gim, '<h4 class="rem-analysis-h4">$1</h4>')
-    html = html.replace(/^##\s+(.+)$/gim, '<h3 class="rem-analysis-h3">$1</h3>')
-    html = html.replace(/^#\s+(.+)$/gim, '<h2 class="rem-analysis-h2">$1</h2>')
-    
-    // Procesar negritas
-    html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong class="rem-analysis-bold">$1</strong>')
-    
-    // Procesar listas
-    html = html.replace(/^[-•]\s+(.+)$/gim, '<li class="rem-analysis-li">$1</li>')
-    html = html.replace(/^(\d+)\.\s+(.+)$/gim, '<li class="rem-analysis-li">$2</li>')
-    
-    // Agrupar listas
-    html = html.replace(/(<li class="rem-analysis-li">.*?<\/li>)/gs, (match) => {
-      return `<ul class="rem-analysis-ul">${match}</ul>`
-    })
-    
-    // Procesar párrafos
-    const lines = html.split('\n')
-    let result = []
-    let currentParagraph = []
-    
-    lines.forEach((line, index) => {
-      const trimmed = line.trim()
-      
-      if (!trimmed) {
-        if (currentParagraph.length > 0) {
-          result.push(`<p class="rem-analysis-p">${currentParagraph.join(' ')}</p>`)
-          currentParagraph = []
-        }
-        return
-      }
-      
-      // Si ya es HTML procesado, agregarlo directamente
-      if (trimmed.startsWith('<')) {
-        if (currentParagraph.length > 0) {
-          result.push(`<p class="rem-analysis-p">${currentParagraph.join(' ')}</p>`)
-          currentParagraph = []
-        }
-        result.push(trimmed)
-        return
-      }
-      
-      currentParagraph.push(trimmed)
-    })
-    
-    if (currentParagraph.length > 0) {
-      result.push(`<p class="rem-analysis-p">${currentParagraph.join(' ')}</p>`)
-    }
-    
-    return result.join('\n')
-  }
-
-  useEffect(() => {
-    // Analizar mapeo con IA cuando los datos cambien (opcional, puede comentarse si no se quiere)
-    // if (data && data.length > 0) {
-    //   analyzeMapping()
-    // }
-  }, [data])
 
   // Función para exportar Sección A a Excel
-  const exportSeccionA = () => {
+  const exportSeccionA = async () => {
     if (!tableData.seccionA || tableData.seccionA.length === 0) {
       alert('No hay datos para exportar en la Sección A')
       return
@@ -1025,11 +1509,19 @@ Responde en español de forma concisa y técnica.`
       'Discapacidad',
       'Privada de Libertad',
       'Trans masculino',
-      'No binarie'
+      'No binarie',
+      'Uso de oxitocina profiláctica',
+      'Anestesia Neuroaxial',
+      'Óxido nitroso',
+      'Analgesia endovenosa',
+      'General',
+      'Local',
+      'Medidas no farmacológicas'
     ])
 
-    // Datos
+    // Datos: misma información que la tabla (indicadores calculados por fila)
     tableData.seccionA.forEach(row => {
+      const ind = getIndicadoresSeccionA(row)
       excelData.push([
         row.label,
         row.total,
@@ -1041,29 +1533,34 @@ Responde en español de forma concisa y técnica.`
         row.porPrematuridad.entre24y28,
         row.porPrematuridad.entre29y32,
         row.porPrematuridad.entre33y36,
-        '', // Ligadura tardía (se calcularía dinámicamente)
-        '', // Contacto madre ≤2.499
-        '', // Contacto madre ≥2.500
-        '', // Contacto padre ≤2.499
-        '', // Contacto padre ≥2.500
-        '', // Lactancia
-        '', // Alojamiento
-        '', // Pertinencia cultural
-        '', // Pueblos originarios
-        '', // Migrantes
-        '', // Discapacidad
-        '', // Privada de libertad
-        '', // Trans masculino
-        ''  // No binarie
+        ind.ligaduraTardia,
+        ind.contactoMadreMenor2500,
+        ind.contactoMadreMayor2500,
+        ind.contactoPadreMenor2500,
+        ind.contactoPadreMayor2500,
+        ind.lactancia,
+        ind.alojamiento,
+        ind.pertinenciaCultural,
+        ind.pueblosOriginarios,
+        ind.migrantes,
+        ind.discapacidad,
+        ind.privadaLibertad,
+        ind.transMasculino,
+        ind.noBinarie,
+        ind.oxitocinaProf,
+        ind.anestesiaNeuroaxial,
+        ind.oxidoNitroso,
+        ind.analgesiaEndovenosa,
+        ind.anestesiaGeneral,
+        ind.anestesiaLocal,
+        ind.medidasNoFarmacologicas
       ])
     })
 
-    // Crear workbook y worksheet
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.aoa_to_sheet(excelData)
+    // Workbook y worksheet se crean dentro de descargarExcelREM (exceljs)
     
     // Ajustar ancho de columnas
-    ws['!cols'] = [
+    const cols = [
       { wch: 50 }, // Características
       { wch: 10 }, // Total
       { wch: 12 }, // < 15 años
@@ -1087,22 +1584,26 @@ Responde en español de forma concisa y técnica.`
       { wch: 15 }, // Discapacidad
       { wch: 20 }, // Privada de libertad
       { wch: 15 }, // Trans masculino
-      { wch: 15 }  // No binarie
+      { wch: 15 }, // No binarie
+      { wch: 22 }, // Oxitocina profiláctica
+      { wch: 20 }, // Neuroaxial
+      { wch: 15 }, // Óxido nitroso
+      { wch: 22 }, // Endovenosa
+      { wch: 12 }, // General
+      { wch: 12 }, // Local
+      { wch: 22 }  // No farmacológicas
     ]
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Sección A')
-    
     // Generar nombre de archivo con fecha
     const fecha = new Date().toISOString().split('T')[0]
     const año = selectedYear !== 'all' ? selectedYear : 'Todos'
     const mes = selectedMonth !== 'all' ? `-${selectedMonth}` : ''
     const filename = `REM_SeccionA_${año}${mes}_${fecha}.xlsx`
-    
-    XLSX.writeFile(wb, filename)
+    await descargarExcelREM('Sección A', excelData, cols, filename)
   }
 
   // Función para exportar Sección A.1 a Excel
-  const exportSeccionA1 = () => {
+  const exportSeccionA1 = async () => {
     if (!tableData.seccionA1 || tableData.seccionA1.length === 0) {
       alert('No hay datos para exportar en la Sección A.1')
       return
@@ -1133,12 +1634,10 @@ Responde en español de forma concisa y técnica.`
       ])
     })
 
-    // Crear workbook y worksheet
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.aoa_to_sheet(excelData)
-    
+    // Workbook y worksheet se crean dentro de descargarExcelREM (exceljs)
+
     // Ajustar ancho de columnas
-    ws['!cols'] = [
+    const cols = [
       { wch: 40 }, // Característica
       { wch: 25 }, // Subcategoría
       { wch: 10 }, // Total
@@ -1147,19 +1646,16 @@ Responde en español de forma concisa y técnica.`
       { wch: 20 }  // 38+ semanas
     ]
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Sección A.1')
-    
     // Generar nombre de archivo
     const fecha = new Date().toISOString().split('T')[0]
     const año = selectedYear !== 'all' ? selectedYear : 'Todos'
     const mes = selectedMonth !== 'all' ? `-${selectedMonth}` : ''
     const filename = `REM_SeccionA1_${año}${mes}_${fecha}.xlsx`
-    
-    XLSX.writeFile(wb, filename)
+    await descargarExcelREM('Sección A.1', excelData, cols, filename)
   }
 
   // Función para exportar Sección D a Excel
-  const exportSeccionD = () => {
+  const exportSeccionD = async () => {
     if (!tableData.seccionD1 || tableData.seccionD1.length === 0) {
       alert('No hay datos para exportar en la Sección D')
       return
@@ -1200,12 +1696,10 @@ Responde en español de forma concisa y técnica.`
       ])
     })
 
-    // Crear workbook y worksheet
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.aoa_to_sheet(excelData)
+    // Workbook y worksheet se crean dentro de descargarExcelREM (exceljs)
     
     // Ajustar ancho de columnas
-    ws['!cols'] = [
+    const cols = [
       { wch: 20 }, // Tipo
       { wch: 10 }, // Total
       { wch: 15 }, // <500
@@ -1219,15 +1713,12 @@ Responde en español de forma concisa y técnica.`
       { wch: 20 }  // Anomalía
     ]
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Sección D.1')
-    
     // Generar nombre de archivo
     const fecha = new Date().toISOString().split('T')[0]
     const año = selectedYear !== 'all' ? selectedYear : 'Todos'
     const mes = selectedMonth !== 'all' ? `-${selectedMonth}` : ''
     const filename = `REM_SeccionD_${año}${mes}_${fecha}.xlsx`
-    
-    XLSX.writeFile(wb, filename)
+    await descargarExcelREM('Sección D.1', excelData, cols, filename)
   }
 
   return (
@@ -1237,42 +1728,6 @@ Responde en español de forma concisa y técnica.`
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      {isAnalyzing && (
-        <motion.div 
-          className="rem-analyzing"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
-          <div className="rem-analyzing-content">
-            <div className="rem-analyzing-spinner"></div>
-            <p>🔍 Analizando mapeo de datos con IA...</p>
-          </div>
-        </motion.div>
-      )}
-      
-      {mappingAnalysis && (
-        <motion.div 
-          className="rem-mapping-analysis"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          <div className="rem-analysis-header">
-            <h3>💡 Análisis de Mapeo con IA</h3>
-            <button 
-              className="rem-analysis-close"
-              onClick={() => setMappingAnalysis(null)}
-              aria-label="Cerrar análisis"
-            >
-              ✕
-            </button>
-          </div>
-          <div 
-            className="rem-analysis-content"
-            dangerouslySetInnerHTML={{ __html: formatMappingAnalysis(mappingAnalysis) }}
-          />
-        </motion.div>
-      )}
 
       {!data || data.length === 0 ? (
         <div className="rem-empty-state">
@@ -1434,6 +1889,8 @@ Responde en español de forma concisa y técnica.`
                     <th rowSpan="2" className="rem-th-main">Discapacidad</th>
                     <th rowSpan="2" className="rem-th-main">Privada de Libertad</th>
                     <th colSpan="2" className="rem-th-group">Identidad de Género</th>
+                    <th rowSpan="2" className="rem-th-main rem-th-vertical">Uso de oxitocina profiláctica</th>
+                    <th colSpan="6" className="rem-th-group">ANESTESIA Y/O ANALGESIA DEL PARTO (MEDIDAS FARMACOLÓGICAS Y NO FARMACOLÓGICAS)</th>
                   </tr>
                   <tr>
                     <th className="rem-th-sub">&lt; 15 años</th>
@@ -1449,6 +1906,12 @@ Responde en español de forma concisa y técnica.`
                     <th colSpan="2" className="rem-th-sub-group">Con el padre o acompañante significativo</th>
                     <th className="rem-th-sub">Trans masculino</th>
                     <th className="rem-th-sub">No binarie</th>
+                    <th className="rem-th-sub">Anestesia Neuroaxial</th>
+                    <th className="rem-th-sub">Óxido nitroso</th>
+                    <th className="rem-th-sub">Analgesia endovenosa</th>
+                    <th className="rem-th-sub">General</th>
+                    <th className="rem-th-sub">Local</th>
+                    <th className="rem-th-sub">Medidas no farmacológicas</th>
                   </tr>
                   <tr className="rem-header-row-3">
                     <th colSpan="2"></th>
@@ -1460,260 +1923,13 @@ Responde en español de forma concisa y técnica.`
                     <th className="rem-th-sub-sub">RN peso menor o igual a 2.499 grs.</th>
                     <th className="rem-th-sub-sub">RN con peso de 2.500 grs. o más</th>
                     <th colSpan="8"></th>
+                    <th colSpan="7"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {/* Sección A: Características del Parto */}
                   {tableData.seccionA.map((row, index) => {
-                    // Usar el filtro guardado en la fila (el mismo que se usó para calcular row.total, row.porEdad, etc.)
-                    const filtroTipoParto = row.filtro || (() => true) // Si no hay filtro guardado, usar todos los partos
-                    
-                    // Calcular indicadores para este tipo de parto
-                    const ligaduraTardia = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        // Ahora es numérico: 1 = SI, 0 = NO
-                        const ligadura = item.ligaduraTardiaCordon || item.ligaduraTardia
-                        if (typeof ligadura === 'number') {
-                          return ligadura === 1
-                        }
-                        return ligadura && (String(ligadura).toUpperCase() === 'SI' || String(ligadura).toUpperCase() === 'SÍ' || ligadura === 1)
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const contactoMadreMenor2500 = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        const peso = item.peso
-                        if (!peso || peso > 2499) return false
-                        // Verificar apegoConPiel30MinMadre (numérico) o apegoConPiel30Min = 1
-                        const contactoMadre = item.apegoConPiel30MinMadre === 1
-                        const contacto = item.apegoConPiel30Min
-                        const contactoOriginal = item.apegoConPiel30MinOriginal
-                        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) {
-                          return peso <= 2499
-                        }
-                        // Compatibilidad con valores string antiguos
-                        if (contactoOriginal) {
-                          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
-                          return (contactoUpper === 'MADRE' || contactoUpper === 'SI' || contactoUpper === 'SÍ') && peso <= 2499
-                        }
-                        return false
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const contactoMadreMayor2500 = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        const peso = item.peso
-                        if (!peso || peso < 2500) return false
-                        // Verificar apegoConPiel30MinMadre (numérico) o apegoConPiel30Min = 1
-                        const contactoMadre = item.apegoConPiel30MinMadre === 1
-                        const contacto = item.apegoConPiel30Min
-                        const contactoOriginal = item.apegoConPiel30MinOriginal
-                        if (contactoMadre || (typeof contacto === 'number' && contacto === 1)) {
-                          return peso >= 2500
-                        }
-                        // Compatibilidad con valores string antiguos
-                        if (contactoOriginal) {
-                          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
-                          return (contactoUpper === 'MADRE' || contactoUpper === 'SI' || contactoUpper === 'SÍ') && peso >= 2500
-                        }
-                        return false
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const contactoPadreMenor2500 = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        const peso = item.peso
-                        if (!peso || peso > 2499) return false
-                        // Verificar apegoConPiel30MinPadre (numérico) o apegoConPiel30Min = 2 o 3
-                        const contactoPadre = item.apegoConPiel30MinPadre === 1
-                        const contacto = item.apegoConPiel30Min
-                        const contactoOriginal = item.apegoConPiel30MinOriginal
-                        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) {
-                          return peso <= 2499
-                        }
-                        // O verificar por parentesco y acompañamiento
-                        const parentesco = item.parentescoAcompananteRespectoARN || item.parentescoAcompananteRespectoAMadre
-                        const parentescoUpper = parentesco ? String(parentesco).toUpperCase() : ''
-                        const esPadrePorParentesco = parentescoUpper.includes('PADRE') || parentescoUpper.includes('PAREJA')
-                        const acompanamiento = item.acompanamientoParto || item.acompanamientoPuerperioInmediato || item.acompanamientoRN
-                        const acompanamientoValido = (typeof acompanamiento === 'number' && acompanamiento === 1) || 
-                                                      (acompanamiento && String(acompanamiento).toUpperCase() === 'SI')
-                        // Compatibilidad con valores string antiguos
-                        if (contactoOriginal) {
-                          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
-                          const esPadreEnApego = contactoUpper === 'PADRE' || contactoUpper === 'OTRA PERSONA SIGNIFICATIVA' || contactoUpper.includes('PADRE')
-                          return (esPadreEnApego || (acompanamientoValido && esPadrePorParentesco)) && peso <= 2499
-                        }
-                        return (acompanamientoValido && esPadrePorParentesco) && peso <= 2499
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const contactoPadreMayor2500 = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        const peso = item.peso
-                        if (!peso || peso < 2500) return false
-                        // Verificar apegoConPiel30MinPadre (numérico) o apegoConPiel30Min = 2 o 3
-                        const contactoPadre = item.apegoConPiel30MinPadre === 1
-                        const contacto = item.apegoConPiel30Min
-                        const contactoOriginal = item.apegoConPiel30MinOriginal
-                        if (contactoPadre || (typeof contacto === 'number' && (contacto === 2 || contacto === 3))) {
-                          return peso >= 2500
-                        }
-                        // O verificar por parentesco y acompañamiento
-                        const parentesco = item.parentescoAcompananteRespectoARN || item.parentescoAcompananteRespectoAMadre
-                        const parentescoUpper = parentesco ? String(parentesco).toUpperCase() : ''
-                        const esPadrePorParentesco = parentescoUpper.includes('PADRE') || parentescoUpper.includes('PAREJA')
-                        const acompanamiento = item.acompanamientoParto || item.acompanamientoPuerperioInmediato || item.acompanamientoRN
-                        const acompanamientoValido = (typeof acompanamiento === 'number' && acompanamiento === 1) || 
-                                                      (acompanamiento && String(acompanamiento).toUpperCase() === 'SI')
-                        // Compatibilidad con valores string antiguos
-                        if (contactoOriginal) {
-                          const contactoUpper = String(contactoOriginal).toUpperCase().trim()
-                          const esPadreEnApego = contactoUpper === 'PADRE' || contactoUpper === 'OTRA PERSONA SIGNIFICATIVA' || contactoUpper.includes('PADRE')
-                          return (esPadreEnApego || (acompanamientoValido && esPadrePorParentesco)) && peso >= 2500
-                        }
-                        return (acompanamientoValido && esPadrePorParentesco) && peso >= 2500
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const lactancia = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        const peso = item.peso
-                        if (!peso || peso < 2500) return false
-                        // Ahora es numérico: 1 = SI, 0 = NO
-                        const lactancia = item.lactanciaPrecoz60MinDeVida || item.lactanciaPrecoz || item.lactanciaMaterna
-                        if (typeof lactancia === 'number') {
-                          return lactancia === 1 && peso >= 2500
-                        }
-                        const lactanciaValida = lactancia && (String(lactancia).toUpperCase() === 'SI' || String(lactancia).toUpperCase() === 'SÍ' || lactancia === 1)
-                        return lactanciaValida && peso >= 2500
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const alojamiento = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        // Ahora es numérico: 1 = SI, 0 = NO
-                        const alojamiento = item.alojamientoConjunto
-                        if (typeof alojamiento === 'number') {
-                          return alojamiento === 1
-                        }
-                        // Verificar alojamientoConjunto directamente o inferir de destino
-                        if (alojamiento) {
-                          const alojamientoUpper = String(alojamiento).toUpperCase().trim()
-                          if (alojamientoUpper === 'SI' || alojamientoUpper === 'SÍ' || alojamiento === 1) {
-                            return true
-                          }
-                        }
-                        // Si no hay alojamientoConjunto, verificar destino
-                        const destino = item.destino
-                        if (destino) {
-                          const destinoUpper = String(destino).toUpperCase().trim()
-                          return destinoUpper.includes('SALA') && !destinoUpper.includes('NO')
-                        }
-                        return false
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const pertinenciaCultural = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        // Ahora son numéricos: 1 = SI, 0 = NO
-                        const atencion = typeof item.atencionConPertinenciaCultural === 'number' ? item.atencionConPertinenciaCultural === 1 : 
-                                        item.atencionConPertinenciaCultural && String(item.atencionConPertinenciaCultural).toUpperCase() === 'SI'
-                        const pueblo = typeof item.puebloOriginario === 'number' ? item.puebloOriginario === 1 : 
-                                      item.puebloOriginario && String(item.puebloOriginario).toUpperCase() === 'SI'
-                        const migrante = typeof item.migrante === 'number' ? item.migrante === 1 : 
-                                        item.migrante && String(item.migrante).toUpperCase() === 'SI'
-                        const discapacidad = typeof item.discapacidad === 'number' ? item.discapacidad === 1 : 
-                                            item.discapacidad && String(item.discapacidad).toUpperCase() === 'SI'
-                        const privada = typeof item.privadaDeLibertad === 'number' ? item.privadaDeLibertad === 1 : 
-                                       item.privadaDeLibertad && String(item.privadaDeLibertad).toUpperCase() === 'SI'
-                        const trans = typeof item.transNoBinario === 'number' ? item.transNoBinario === 1 : 
-                                      item.transNoBinario && String(item.transNoBinario).toUpperCase() === 'SI'
-                        return atencion || pueblo || migrante || discapacidad || privada || trans
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const pueblosOriginarios = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        if (typeof item.puebloOriginario === 'number') {
-                          return item.puebloOriginario === 1
-                        }
-                        return item.puebloOriginario && (String(item.puebloOriginario).toUpperCase() === 'SI' || String(item.puebloOriginario).toUpperCase() === 'SÍ' || item.puebloOriginario === 1)
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const migrantes = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        if (typeof item.migrante === 'number') {
-                          return item.migrante === 1
-                        }
-                        return item.migrante && (String(item.migrante).toUpperCase() === 'SI' || String(item.migrante).toUpperCase() === 'SÍ' || item.migrante === 1)
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const discapacidad = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        if (typeof item.discapacidad === 'number') {
-                          return item.discapacidad === 1
-                        }
-                        return item.discapacidad && (String(item.discapacidad).toUpperCase() === 'SI' || String(item.discapacidad).toUpperCase() === 'SÍ' || item.discapacidad === 1)
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const privadaLibertad = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        if (typeof item.privadaDeLibertad === 'number') {
-                          return item.privadaDeLibertad === 1
-                        }
-                        return item.privadaDeLibertad && (String(item.privadaDeLibertad).toUpperCase() === 'SI' || String(item.privadaDeLibertad).toUpperCase() === 'SÍ' || item.privadaDeLibertad === 1)
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const transMasculino = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        if (typeof item.transNoBinario === 'number') {
-                          return item.transNoBinario === 1
-                        }
-                        return (item.transNoBinario && String(item.transNoBinario).toUpperCase() === 'SI') ||
-                               (item.identidadGenero && String(item.identidadGenero).toUpperCase() === 'TRANS MASCULINO')
-                      },
-                      filtroTipoParto
-                    )
-                    
-                    const noBinarie = calcularIndicadorPorTipo(
-                      data,
-                      item => {
-                        // Verificar por identidad de género específica
-                        return item.identidadGenero && String(item.identidadGenero).toUpperCase() === 'NO BINARIE'
-                      },
-                      filtroTipoParto
-                    )
-                    
+                    const ind = getIndicadoresSeccionA(row)
                     return (
                       <tr key={`seccionA-${index}`} className={index === 0 ? 'rem-row-total' : ''}>
                         <td className="rem-td-label">{row.label}</td>
@@ -1726,21 +1942,27 @@ Responde en español de forma concisa y técnica.`
                         <td className="rem-td-value">{row.porPrematuridad.entre24y28}</td>
                         <td className="rem-td-value">{row.porPrematuridad.entre29y32}</td>
                         <td className="rem-td-value">{row.porPrematuridad.entre33y36}</td>
-                        {/* Indicadores adicionales */}
-                        <td className="rem-td-value">{ligaduraTardia}</td>
-                        <td className="rem-td-value">{contactoMadreMenor2500}</td>
-                        <td className="rem-td-value">{contactoMadreMayor2500}</td>
-                        <td className="rem-td-value">{contactoPadreMenor2500}</td>
-                        <td className="rem-td-value">{contactoPadreMayor2500}</td>
-                        <td className="rem-td-value">{lactancia}</td>
-                        <td className="rem-td-value">{alojamiento}</td>
-                        <td className="rem-td-value">{pertinenciaCultural}</td>
-                        <td className="rem-td-value">{pueblosOriginarios}</td>
-                        <td className="rem-td-value">{migrantes}</td>
-                        <td className="rem-td-value">{discapacidad}</td>
-                        <td className="rem-td-value">{privadaLibertad}</td>
-                        <td className="rem-td-value">{transMasculino}</td>
-                        <td className="rem-td-value">{noBinarie}</td>
+                        <td className="rem-td-value">{ind.ligaduraTardia}</td>
+                        <td className="rem-td-value">{ind.contactoMadreMenor2500}</td>
+                        <td className="rem-td-value">{ind.contactoMadreMayor2500}</td>
+                        <td className="rem-td-value">{ind.contactoPadreMenor2500}</td>
+                        <td className="rem-td-value">{ind.contactoPadreMayor2500}</td>
+                        <td className="rem-td-value">{ind.lactancia}</td>
+                        <td className="rem-td-value">{ind.alojamiento}</td>
+                        <td className="rem-td-value">{ind.pertinenciaCultural}</td>
+                        <td className="rem-td-value">{ind.pueblosOriginarios}</td>
+                        <td className="rem-td-value">{ind.migrantes}</td>
+                        <td className="rem-td-value">{ind.discapacidad}</td>
+                        <td className="rem-td-value">{ind.privadaLibertad}</td>
+                        <td className="rem-td-value">{ind.transMasculino}</td>
+                        <td className="rem-td-value">{ind.noBinarie}</td>
+                        <td className="rem-td-value">{ind.oxitocinaProf}</td>
+                        <td className="rem-td-value">{ind.anestesiaNeuroaxial}</td>
+                        <td className="rem-td-value">{ind.oxidoNitroso}</td>
+                        <td className="rem-td-value">{ind.analgesiaEndovenosa}</td>
+                        <td className="rem-td-value">{ind.anestesiaGeneral}</td>
+                        <td className="rem-td-value">{ind.anestesiaLocal}</td>
+                        <td className="rem-td-value">{ind.medidasNoFarmacologicas}</td>
                       </tr>
                     )
                   })}
@@ -1871,7 +2093,105 @@ Responde en español de forma concisa y técnica.`
               </div>
             </>
           )}
-          
+
+          {/* Sección A.2: Cesáreas según Modelo de Robson */}
+          {tableData.seccionA2 && tableData.seccionA2.length > 0 && (
+            <>
+              <div className="rem-header" style={{ marginTop: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+                <h2>📋 SECCIÓN A.2: CESÁREAS (CLASIFICACIÓN SEGÚN MODELO DE ROBSON)</h2>
+              </div>
+              <div className="rem-table-wrapper">
+                <table className="rem-table">
+                  <thead>
+                    <tr>
+                      <th colSpan="2" className="rem-th-main">CLASIFICACIÓN SEGÚN MODELO DE ROBSON</th>
+                      <th className="rem-th-main">Programada</th>
+                      <th className="rem-th-main">Urgencia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableData.seccionA2.map((row, index) => {
+                      const prevRow = index > 0 ? tableData.seccionA2[index - 1] : null
+                      const isSubcategory = row.subcategory !== null
+                      let showMainLabel = false
+                      let rowSpan = 1
+
+                      if (!isSubcategory) {
+                        showMainLabel = true
+                      } else {
+                        showMainLabel = !prevRow || prevRow.label !== row.label
+                        if (showMainLabel) {
+                          let count = 1
+                          for (let i = index + 1; i < tableData.seccionA2.length; i++) {
+                            if (tableData.seccionA2[i].label === row.label && tableData.seccionA2[i].subcategory !== null) count++
+                            else break
+                          }
+                          rowSpan = count
+                        }
+                      }
+
+                      return (
+                        <tr key={`seccionA2-${index}`}>
+                          {!isSubcategory ? (
+                            <td colSpan="2" className="rem-td-label" style={{ fontWeight: 'bold' }}>{row.label}</td>
+                          ) : (
+                            <>
+                              {showMainLabel && (
+                                <td rowSpan={rowSpan} className="rem-td-label" style={{ fontWeight: 'bold', verticalAlign: 'top' }}>{row.label}</td>
+                              )}
+                              <td className="rem-td-label" style={{ paddingLeft: '20px' }}>{row.subcategory}</td>
+                            </>
+                          )}
+                          <td className="rem-td-value">{row.programada}</td>
+                          <td className="rem-td-value">{row.urgencia}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* Sección D.2: Atención Inmediata del Recién Nacido */}
+          {tableData.seccionD2 && (
+            <>
+              <div className="rem-header" style={{ marginTop: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+                <h2>📋 SECCIÓN D.2: ATENCIÓN INMEDIATA DEL RECIÉN NACIDO</h2>
+              </div>
+              <div className="rem-table-wrapper">
+                <table className="rem-table">
+                  <thead>
+                    <tr>
+                      <th rowSpan="2" className="rem-th-main">TIPO</th>
+                      <th colSpan="4" className="rem-th-group">LESIONES POR TIPO DE PARTO</th>
+                      <th colSpan="2" className="rem-th-group">APGAR</th>
+                    </tr>
+                    <tr>
+                      <th className="rem-th-sub">Parto Vaginal</th>
+                      <th className="rem-th-sub">Parto Instrumental</th>
+                      <th className="rem-th-sub">Cesárea</th>
+                      <th className="rem-th-sub">Parto extrahospitalario</th>
+                      <th className="rem-th-sub">Apgar menor o igual a 3 al minuto</th>
+                      <th className="rem-th-sub">Apgar menor o igual a 6 a los 5 minutos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="rem-td-label">Nacidos vivos</td>
+                      <td className="rem-td-value">{tableData.seccionD2.lesionesVaginal}</td>
+                      <td className="rem-td-value">{tableData.seccionD2.lesionesInstrumental}</td>
+                      <td className="rem-td-value">{tableData.seccionD2.lesionesCesarea}</td>
+                      <td className="rem-td-value">{tableData.seccionD2.lesionesExtrahospitalario}</td>
+                      <td className="rem-td-value">{tableData.seccionD2.apgar3min1}</td>
+                      <td className="rem-td-value">{tableData.seccionD2.apgar6min5}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
           {/* Sección D.1: Información General de Recién Nacidos Vivos */}
           {tableData.seccionD1 && tableData.seccionD1.length > 0 && (
             <>

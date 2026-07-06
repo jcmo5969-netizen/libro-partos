@@ -1,7 +1,80 @@
 import express from 'express';
 import pool from '../db/connection.js';
+import { sendError } from '../utils/httpError.js';
 
 const router = express.Router();
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * Verifica que el usuario autenticado puede modificar/eliminar el parto indicado.
+ * Regla: ADMIN puede todo; el resto solo sobre partos que registró (registrado_por_username / creado_por).
+ * Devuelve { ok: true } o { ok: false, status, error } para responder directamente.
+ */
+async function assertPuedeModificarParto(id, user) {
+  if (!user) {
+    return { ok: false, status: 401, error: 'Autenticación requerida' };
+  }
+  if (user.rol === 'ADMIN') {
+    return { ok: true };
+  }
+
+  const lookup = isUuid(id)
+    ? await pool.query(
+        'SELECT registrado_por_username, creado_por FROM partos WHERE id = $1::uuid OR trace_id = $2',
+        [id, id]
+      )
+    : await pool.query(
+        'SELECT registrado_por_username, creado_por FROM partos WHERE trace_id = $1',
+        [id]
+      );
+
+  if (lookup.rows.length === 0) {
+    return { ok: false, status: 404, error: 'Parto no encontrado' };
+  }
+
+  const row = lookup.rows[0];
+  const owner = row.registrado_por_username || row.creado_por;
+  const username = user.username;
+  if (owner && username && String(owner).toLowerCase() === String(username).toLowerCase()) {
+    return { ok: true };
+  }
+
+  return { ok: false, status: 403, error: 'No autorizado para modificar este parto' };
+}
+
+/** No sobrescribir con NULL en UPDATE si el cliente envía string vacío (p. ej. grupo RH no mapeado en el formulario). */
+const preserveOnEmptyStringUpdate = new Set(['grupo_rh']);
+
+function formatDateForFrontend(value) {
+  if (!value) {
+    return '';
+  }
+
+  if (value instanceof Date) {
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(value.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  if (typeof value === 'string') {
+    const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    }
+
+    const slashMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashMatch) {
+      const [, month, day, year] = slashMatch;
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+  }
+
+  return value;
+}
 
 // GET /api/partos - Obtener todos los partos con filtros opcionales
 router.get('/', async (req, res) => {
@@ -76,7 +149,7 @@ router.get('/', async (req, res) => {
     res.json(partos);
   } catch (error) {
     console.error('Error obteniendo partos:', error);
-    res.status(500).json({ error: 'Error al obtener los partos', details: error.message });
+    return sendError(res, 500, 'Error al obtener los partos', error);
   }
 });
 
@@ -87,7 +160,7 @@ router.get('/count', async (req, res) => {
     res.json({ total: parseInt(result.rows[0].total) });
   } catch (error) {
     console.error('Error contando partos:', error);
-    res.status(500).json({ error: 'Error al contar los partos', details: error.message });
+    return sendError(res, 500, 'Error al contar los partos', error);
   }
 });
 
@@ -96,9 +169,16 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Intentar buscar por UUID primero, luego por trace_id
-    let query = 'SELECT * FROM partos WHERE id = $1 OR trace_id = $1';
-    const result = await pool.query(query, [id]);
+    let query;
+    let params;
+    if (isUuid(id)) {
+      query = 'SELECT * FROM partos WHERE id = $1::uuid OR trace_id = $2';
+      params = [id, id];
+    } else {
+      query = 'SELECT * FROM partos WHERE trace_id = $1';
+      params = [id];
+    }
+    const result = await pool.query(query, params);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Parto no encontrado' });
@@ -107,7 +187,7 @@ router.get('/:id', async (req, res) => {
     res.json(transformRowToFrontendFormat(result.rows[0]));
   } catch (error) {
     console.error('Error obteniendo parto:', error);
-    res.status(500).json({ error: 'Error al obtener el parto', details: error.message });
+    return sendError(res, 500, 'Error al obtener el parto', error);
   }
 });
 
@@ -115,24 +195,34 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const partoData = req.body;
-    console.log('📥 Datos recibidos del frontend:', JSON.stringify(partoData, null, 2));
-    
+    // No registrar payloads completos: contienen PHI (nombre, RUT, VIH, etc.).
+
     const transformedData = transformFrontendToDbFormat(partoData);
-    console.log('🔄 Datos transformados:', JSON.stringify(transformedData, null, 2));
     
     // Generar trace_id si no existe
     if (!transformedData.trace_id) {
       transformedData.trace_id = generateTraceId(transformedData);
     }
     
-    // Agregar creado_por desde el usuario autenticado
+    // Agregar creado_por y registrado_por desde el usuario autenticado
     if (req.user && req.user.username) {
       transformedData.creado_por = req.user.username;
+      if (!transformedData.registrado_por_username) {
+        transformedData.registrado_por_username = req.user.username;
+      }
     }
     
     // No incluir correlativo en el INSERT, se generará automáticamente
     delete transformedData.correlativo;
-    
+
+    // Calcular IMC materno automáticamente
+    if (transformedData.peso_materno && transformedData.talla_materna) {
+      const tallaMt = parseFloat(transformedData.talla_materna) / 100;
+      if (tallaMt > 0) {
+        transformedData.imc_materno = Math.round((parseFloat(transformedData.peso_materno) / (tallaMt * tallaMt)) * 100) / 100;
+      }
+    }
+
     // Normalizar RUT
     if (transformedData.rut) {
       transformedData.rut_normalized = transformedData.rut.replace(/[.\-]/g, '').toUpperCase();
@@ -172,39 +262,30 @@ router.post('/', async (req, res) => {
     const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
     
     const query = `INSERT INTO partos (${columns}) VALUES (${placeholders}) RETURNING *`;
-    console.log('📝 Query SQL:', query.substring(0, 200) + '...');
-    console.log('📊 Total de valores:', values.length);
-    console.log('📊 Primeros 5 valores:', values.slice(0, 5));
-    console.log('📊 Primeras 5 columnas:', columns.split(', ').slice(0, 5));
-    
+    // No registrar valores/columnas del INSERT: pueden contener PHI.
+
     const result = await pool.query(query, values);
-    
+
     console.log('✅ Parto creado exitosamente:', result.rows[0].id);
     res.status(201).json(transformRowToFrontendFormat(result.rows[0]));
   } catch (error) {
-    console.error('❌ Error creando parto:', error.message);
-    console.error('📋 Código de error:', error.code);
-    console.error('📋 Detalle:', error.detail);
-    console.error('📋 Stack trace:', error.stack);
-    
-    // Mensaje de error más descriptivo
-    let errorMessage = error.message;
-    if (error.code === '23502') {
-      errorMessage = `Campo requerido faltante: ${error.column || 'desconocido'}`;
-    } else if (error.code === '23505') {
-      errorMessage = `Violación de restricción única: ${error.detail || 'El registro ya existe'}`;
-    } else if (error.code === '23503') {
-      errorMessage = `Violación de clave foránea: ${error.detail || 'Referencia inválida'}`;
-    } else if (error.detail) {
-      errorMessage = `${error.message}: ${error.detail}`;
+    if (error.statusCode === 400) {
+      return res.status(400).json({ error: error.message });
     }
-    
-    res.status(500).json({ 
-      error: 'Error al crear el parto', 
-      details: errorMessage,
-      code: error.code,
-      column: error.column
-    });
+    // No registrar error.detail: en violaciones de unicidad puede contener PHI (p. ej. RUT).
+    console.error('❌ Error creando parto | code:', error.code);
+
+    // Mensajes públicos seguros por tipo de error (sin exponer error.detail/column).
+    if (error.code === '23502') {
+      return sendError(res, 400, `Campo requerido faltante: ${error.column || 'desconocido'}`, error);
+    }
+    if (error.code === '23505') {
+      return sendError(res, 409, 'El registro ya existe (violación de restricción única).', error);
+    }
+    if (error.code === '23503') {
+      return sendError(res, 400, 'Referencia inválida (violación de clave foránea).', error);
+    }
+    return sendError(res, 500, 'Error al crear el parto', error);
   }
 });
 
@@ -213,7 +294,13 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const partoData = req.body;
-    const transformedData = transformFrontendToDbFormat(partoData);
+
+    const authz = await assertPuedeModificarParto(id, req.user);
+    if (!authz.ok) {
+      return res.status(authz.status).json({ error: authz.error });
+    }
+
+    const transformedData = transformFrontendToDbFormat(partoData, true); // isUpdate=true: permite limpiar campos vacíos
     
     // Normalizar RUT si se actualiza
     if (transformedData.rut) {
@@ -225,15 +312,31 @@ router.put('/:id', async (req, res) => {
       const date = new Date(transformedData.fecha_parto);
       transformedData.mes_parto = date.getMonth() + 1;
     }
-    
-    const setClause = Object.keys(transformedData)
-      .map((key, i) => `${key} = $${i + 2}`)
-      .join(', ');
-    
-    const values = Object.values(transformedData);
-    values.unshift(id);
-    
-    const query = `UPDATE partos SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = $1 OR trace_id = $1 RETURNING *`;
+
+    // Recalcular IMC materno si se actualizan peso o talla
+    if (transformedData.peso_materno && transformedData.talla_materna) {
+      const tallaMt = parseFloat(transformedData.talla_materna) / 100;
+      if (tallaMt > 0) {
+        transformedData.imc_materno = Math.round((parseFloat(transformedData.peso_materno) / (tallaMt * tallaMt)) * 100) / 100;
+      }
+    }
+
+    const dataValues = Object.values(transformedData);
+    let query;
+    let values;
+    if (isUuid(id)) {
+      const setClause = Object.keys(transformedData)
+        .map((key, i) => `${key} = $${i + 3}`)
+        .join(', ');
+      query = `UPDATE partos SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = $1::uuid OR trace_id = $2 RETURNING *`;
+      values = [id, id, ...dataValues];
+    } else {
+      const setClause = Object.keys(transformedData)
+        .map((key, i) => `${key} = $${i + 2}`)
+        .join(', ');
+      query = `UPDATE partos SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE trace_id = $1 RETURNING *`;
+      values = [id, ...dataValues];
+    }
     const result = await pool.query(query, values);
     
     if (result.rows.length === 0) {
@@ -242,8 +345,10 @@ router.put('/:id', async (req, res) => {
     
     res.json(transformRowToFrontendFormat(result.rows[0]));
   } catch (error) {
-    console.error('Error actualizando parto:', error);
-    res.status(500).json({ error: 'Error al actualizar el parto', details: error.message });
+    if (error.statusCode === 400) {
+      return res.status(400).json({ error: error.message });
+    }
+    return sendError(res, 500, 'Error al actualizar el parto', error);
   }
 });
 
@@ -251,9 +356,22 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
-    const query = 'DELETE FROM partos WHERE id = $1 OR trace_id = $1 RETURNING id';
-    const result = await pool.query(query, [id]);
+
+    const authz = await assertPuedeModificarParto(id, req.user);
+    if (!authz.ok) {
+      return res.status(authz.status).json({ error: authz.error });
+    }
+
+    let query;
+    let params;
+    if (isUuid(id)) {
+      query = 'DELETE FROM partos WHERE id = $1::uuid OR trace_id = $2 RETURNING id';
+      params = [id, id];
+    } else {
+      query = 'DELETE FROM partos WHERE trace_id = $1 RETURNING id';
+      params = [id];
+    }
+    const result = await pool.query(query, params);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Parto no encontrado' });
@@ -261,14 +379,14 @@ router.delete('/:id', async (req, res) => {
     
     res.json({ message: 'Parto eliminado correctamente', id: result.rows[0].id });
   } catch (error) {
-    console.error('Error eliminando parto:', error);
-    res.status(500).json({ error: 'Error al eliminar el parto', details: error.message });
+    return sendError(res, 500, 'Error al eliminar el parto', error);
   }
 });
 
 // Función para transformar datos de BD a formato frontend
 function transformRowToFrontendFormat(row) {
   const transformed = {};
+  const formattedDate = formatDateForFrontend(row.fecha_parto);
   
   // Mapear campos de snake_case a camelCase
   Object.keys(row).forEach(key => {
@@ -278,18 +396,68 @@ function transformRowToFrontendFormat(row) {
   
   // Agregar campos compatibles con el formato anterior
   transformed._traceId = row.trace_id;
-  transformed.numero = row.n_parto_ano?.toString() || '';
-  transformed.id = row.n_parto_mes?.toString() || transformed.numero;
-  transformed.fecha = row.fecha_parto;
+  transformed.numero = row.correlativo?.toString() || row.n_parto_ano?.toString() || '';
+  transformed.id = row.id;
+  transformed.fechaParto = formattedDate;
+  transformed.fecha = formattedDate;
   transformed.hora = row.hora_parto;
   transformed.nombre = row.nombre_y_apellido;
   transformed.semanasGestacion = row.eg;
   transformed.tipoAnestesia = row.tipo_anestesia;
   transformed.perimetroCefalico = row.cc;
   
+  // Mapeo explícito para campos de anestesia (mantener consistencia con frontend)
+  if (row.detalle_anestesia_pca !== undefined) {
+    transformed.detalleAnestesiaPCA = row.detalle_anestesia_pca;
+  }
+  
   // Campos de control
   transformed.correlativo = row.correlativo;
   transformed.creadoPor = row.creado_por;
+
+  // Peso, talla e IMC materna
+  transformed.pesoMaterno = row.peso_materno;
+  transformed.tallaMaterna = row.talla_materna;
+  transformed.imcMaterno = row.imc_materno;
+
+  // Responsable del llenado
+  transformed.registradoPor = row.registrado_por;
+  transformed.registradoPorUsername = row.registrado_por_username || row.creado_por;
+
+  // Alias explícitos para campos con nombres no-estándar que el frontend espera
+  transformed.libertadDeMovimientoOEnTDP = row.libertad_movimiento_tdp;
+  transformed.regimenHidricoAmplioEnTDP = row.regimen_hidrico_amplio_tdp;
+  transformed.manejoFarmacologicoDelDolor = row.manejo_farmacologico_dolor;
+  transformed.manejoNoFarmacologicoDelDolor = row.manejo_no_farmacologico_dolor;
+  transformed.posicionMaternaEnElExpulsivo = row.posicion_materna_expulsivo;
+  transformed.medidasNoFarmacologicasParaElDolorCuales = row.medidas_no_farmacologicas_dolor;
+  transformed.atencionConPertinenciaCultural = row.atencion_pertinencia_cultural;
+  transformed.planDeParto = row.plan_parto;
+  transformed.trabajoDeParto = row.trabajo_parto;
+  transformed.motivoSinLibertadDeMovimiento = row.motivo_sin_libertad_movimiento;
+  transformed.acompanamientoRN = row.acompanamiento_rn;
+  transformed.acompanamientoPuerperioInmediato = row.acompanamiento_puerperio;
+  transformed.lactanciaPrecoz60MinDeVida = row.lactancia_precoz_60min;
+  transformed.parentescoAcompananteRespectoAMadre = row.parentesco_acompanante_madre;
+  transformed.parentescoAcompananteRespectoARN = row.parentesco_acompanante_rn;
+  transformed.privadaDeLibertad = row.privada_libertad;
+  transformed.alumbramientoConducido = row.alumbramiento_conducido;
+  transformed.apegoConPiel30Min = row.apego_piel_30min;
+  transformed.sgbConTratamientoAlParto = row.sgb_tratamiento_al_parto;
+  transformed.embControlado = row.emb_controlado;
+  transformed.vihAlParto = row.vih_al_parto;
+  transformed.rprVdrl = row.rpr_vdrl;
+  transformed.hepatitisB = row.hepatitis_b;
+
+  // Profesionales — mapeos explícitos para evitar errores de capitalización
+  transformed.matronaRN = row.matrona_rn;
+  transformed.matronaPreparto = row.matrona_preparto;
+  transformed.matronaParto = row.matrona_parto;
+  transformed.medicoObstetra = row.medico_obstetra;
+  transformed.medicoPediatra = row.medico_pediatra;
+  transformed.medicoAnestesista = row.medico_anestesista;
+  transformed.medicoIndicaCesarea = row.medico_indica_cesarea;
+  transformed.medicoOperadorCesarea = row.medico_operador_cesarea;
   
   // Normalizar campos booleanos
   const booleanFields = [
@@ -301,7 +469,7 @@ function transformRowToFrontendFormat(row) {
     'atencionPertinenciaCultural', 'alojamientoConjunto',
     'acompanamientoPreparto', 'acompanamientoParto',
     'acompanamientoPuerperio', 'acompanamientoRn',
-    'lactanciaPrecoz60min', 'embControlado', 'tallerChcc',
+    'lactanciaPrecoz60min', 'embControlado',
     'privadaLibertad', 'transNoBinario', 'malformaciones',
     'chagas', 'vih', 'vihAlParto', 'rprVdrl', 'hepatitisB'
   ];
@@ -317,7 +485,7 @@ function transformRowToFrontendFormat(row) {
 }
 
 // Función para transformar datos de frontend a formato BD
-function transformFrontendToDbFormat(data) {
+function transformFrontendToDbFormat(data, isUpdate = false) {
   const transformed = {};
   
   // Lista de campos válidos en el schema de PostgreSQL (solo estos se permiten)
@@ -335,12 +503,21 @@ function transformFrontendToDbFormat(data) {
     'atencion_pertinencia_cultural', 'alumbramiento_conducido', 'grupo_rh', 'chagas', 'vih',
     'vih_al_parto', 'rpr_vdrl', 'hepatitis_b', 'sgb', 'sgb_tratamiento_al_parto',
     'emb_controlado', 'peso', 'talla', 'cc', 'apgar1', 'apgar5', 'apgar10', 'sexo',
-    'malformaciones', 'medico_obstetra', 'medico_pediatra', 'matrona_preparto',
+    'malformaciones', 'medico_obstetra', 'medico_pediatra', 'medico_indica_cesarea',
+    'medico_operador_cesarea', 'clasificacion_robson', 'matrona_preparto',
     'matrona_parto', 'matrona_rn', 'acompanamiento_preparto', 'acompanamiento_parto',
     'acompanamiento_puerperio', 'acompanamiento_rn', 'nombre_acompanante',
     'parentesco_acompanante_madre', 'parentesco_acompanante_rn', 'apego_piel_30min',
     'causa_no_apego', 'lactancia_precoz_60min', 'destino', 'alojamiento_conjunto',
-    'comentarios', 'taller_chcc', 'privada_libertad', 'trans_no_binario'
+    'comentarios', 'privada_libertad', 'trans_no_binario',
+    'tipo_induccion', 'induccion_mecanica', 'induccion_farmacologica',
+    'induccion_combinada', 'detalle_induccion', 'peso2', 'talla2', 'cc2',
+    'apgar1_2', 'apgar5_2', 'apgar10_2', 'sexo2', 'malformaciones2',
+    'hora_parto_2', 'destino_2',
+    'detalle_anestesia_combinada', 'detalle_anestesia_pca',
+    'peso_materno', 'talla_materna', 'imc_materno',
+    'registrado_por', 'registrado_por_username',
+    'causa_cesarea_electiva'
   ]);
   
   // Campos que deben ignorarse completamente (campos de compatibilidad del frontend)
@@ -369,6 +546,15 @@ function transformFrontendToDbFormat(data) {
     // Tipo de parto
     'tipoParto': 'tipo_parto',
     
+    // Peso, talla e IMC materna
+    'pesoMaterno': 'peso_materno',
+    'tallaMaterna': 'talla_materna',
+    'imcMaterno': 'imc_materno',
+
+    // Responsable del llenado
+    'registradoPor': 'registrado_por',
+    'registradoPorUsername': 'registrado_por_username',
+
     // Datos de la madre
     'nombreYApellido': 'nombre_y_apellido',
     'nombre': 'nombre_y_apellido',
@@ -404,6 +590,7 @@ function transformFrontendToDbFormat(data) {
     'desgarro': 'desgarro',
     'medidasNoFarmacologicasParaElDolorCuales': 'medidas_no_farmacologicas_dolor',
     'causaCesarea': 'causa_cesarea',
+    'causaCesareaElectiva': 'causa_cesarea_electiva',
     'eq': 'eq',
     
     // Anestesia
@@ -415,6 +602,8 @@ function transformFrontendToDbFormat(data) {
     'manejoFarmacologicoDelDolor': 'manejo_farmacologico_dolor',
     'manejoNoFarmacologicoDelDolor': 'manejo_no_farmacologico_dolor',
     'motivoNoAnestesia': 'motivo_no_anestesia',
+    'detalleAnestesiaCombinada': 'detalle_anestesia_combinada',
+    'detalleAnestesiaPCA': 'detalle_anestesia_pca',
     
     // Plan de parto y prácticas
     'planDeParto': 'plan_parto',
@@ -450,9 +639,33 @@ function transformFrontendToDbFormat(data) {
     // Personal médico
     'medicoObstetra': 'medico_obstetra',
     'medicoPediatra': 'medico_pediatra',
+    'medicoIndicaCesarea': 'medico_indica_cesarea',
+    'medicoOperadorCesarea': 'medico_operador_cesarea',
+    'clasificacionRobson': 'clasificacion_robson',
     'matronaPreparto': 'matrona_preparto',
     'matronaParto': 'matrona_parto',
     'matronaRN': 'matrona_rn',
+    
+    // Inducción detallada
+    'tipoInduccion': 'tipo_induccion',
+    'induccionMecanica': 'induccion_mecanica',
+    'induccionFarmacologica': 'induccion_farmacologica',
+    'induccionCombinada': 'induccion_combinada',
+    'detalleInduccion': 'detalle_induccion',
+    
+    // Segundo recién nacido (gemelar)
+    'peso2': 'peso2',
+    'talla2': 'talla2',
+    'cc2': 'cc2',
+    'apgar1_2': 'apgar1_2',
+    'apgar5_2': 'apgar5_2',
+    'apgar10_2': 'apgar10_2',
+    'sexo2': 'sexo2',
+    'malformaciones2': 'malformaciones2',
+    'horaParto2': 'hora_parto_2',
+    'hora_parto_2': 'hora_parto_2',
+    'destino2': 'destino_2',
+    'destino_2': 'destino_2',
     
     // Acompañamiento y apego
     'acompanamientoPreparto': 'acompanamiento_preparto',
@@ -472,7 +685,6 @@ function transformFrontendToDbFormat(data) {
     
     // Información adicional
     'comentarios': 'comentarios',
-    'tallerCHCC': 'taller_chcc',
     'privadaDeLibertad': 'privada_libertad',
     'transNoBinario': 'trans_no_binario',
   };
@@ -487,10 +699,10 @@ function transformFrontendToDbFormat(data) {
     'atencion_pertinencia_cultural', 'alojamiento_conjunto',
     'acompanamiento_preparto', 'acompanamiento_parto',
     'acompanamiento_puerperio', 'acompanamiento_rn',
-    'lactancia_precoz_60min', 'emb_controlado', 'taller_chcc',
+    'lactancia_precoz_60min', 'emb_controlado',
     'privada_libertad', 'trans_no_binario', 'malformaciones',
     'chagas', 'vih', 'vih_al_parto', 'rpr_vdrl', 'hepatitis_b',
-    'alumbramiento_conducido'
+    'alumbramiento_conducido', 'malformaciones2'
   ];
   
   // Campos especiales que son INTEGER pero pueden tener múltiples valores
@@ -529,6 +741,12 @@ function transformFrontendToDbFormat(data) {
     
     // Ignorar strings vacíos para campos opcionales
     if (typeof data[key] === 'string' && data[key].trim() === '' && dbKey !== 'trace_id') {
+      if (isUpdate && preserveOnEmptyStringUpdate.has(dbKey)) {
+        return; // No enviar columna: conserva el valor en BD (evita borrar grupo RH al editar)
+      }
+      if (isUpdate && !integerBooleanFields.includes(dbKey)) {
+        transformed[dbKey] = null; // Permite limpiar el campo en UPDATE
+      }
       return;
     }
     

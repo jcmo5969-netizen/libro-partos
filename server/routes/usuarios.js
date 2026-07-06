@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db/connection.js';
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
+import { sendError } from '../utils/httpError.js';
 
 const router = express.Router();
 
@@ -34,7 +35,7 @@ router.get('/', async (req, res) => {
     res.json(usuarios);
   } catch (error) {
     console.error('Error obteniendo usuarios:', error);
-    res.status(500).json({ error: 'Error al obtener los usuarios', details: error.message });
+    return sendError(res, 500, 'Error al obtener los usuarios', error);
   }
 });
 
@@ -69,7 +70,7 @@ router.get('/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Error obteniendo usuario:', error);
-    res.status(500).json({ error: 'Error al obtener el usuario', details: error.message });
+    return sendError(res, 500, 'Error al obtener el usuario', error);
   }
 });
 
@@ -121,7 +122,7 @@ router.post('/', async (req, res) => {
     });
   } catch (error) {
     console.error('Error creando usuario:', error);
-    res.status(500).json({ error: 'Error al crear el usuario', details: error.message });
+    return sendError(res, 500, 'Error al crear el usuario', error);
   }
 });
 
@@ -226,7 +227,7 @@ router.put('/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Error actualizando usuario:', error);
-    res.status(500).json({ error: 'Error al actualizar el usuario', details: error.message });
+    return sendError(res, 500, 'Error al actualizar el usuario', error);
   }
 });
 
@@ -255,7 +256,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ message: 'Usuario eliminado correctamente', id: result.rows[0].id });
   } catch (error) {
     console.error('Error eliminando usuario:', error);
-    res.status(500).json({ error: 'Error al eliminar el usuario', details: error.message });
+    return sendError(res, 500, 'Error al eliminar el usuario', error);
   }
 });
 

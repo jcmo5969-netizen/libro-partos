@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS partos (
     alumbramiento_conducido INTEGER DEFAULT 0,
     
     -- Exámenes de la madre
-    grupo_rh VARCHAR(10),
+    grupo_rh VARCHAR(50),
     chagas INTEGER DEFAULT 0, -- 0 = NEGATIVO, 1 = POSITIVO
     vih INTEGER DEFAULT 0,
     vih_al_parto INTEGER DEFAULT 0,

@@ -12,9 +12,16 @@ async function createAdmin() {
     console.log('🔄 Creando usuario administrador...');
 
     const username = process.env.ADMIN_USERNAME || 'admin';
-    const password = process.env.ADMIN_PASSWORD || 'admin123';
+    const password = process.env.ADMIN_PASSWORD;
     const nombreCompleto = process.env.ADMIN_NOMBRE || 'Administrador';
     const email = process.env.ADMIN_EMAIL || 'admin@hospital.cl';
+
+    // Sin contraseña por defecto: obligar a definir ADMIN_PASSWORD en el entorno.
+    if (!password || password.length < 8) {
+      console.error('❌ Defina ADMIN_PASSWORD (>=8 caracteres) en el entorno antes de crear el administrador.');
+      await pool.end();
+      process.exit(1);
+    }
 
     // Verificar si el usuario ya existe
     const existingUser = await pool.query(
@@ -52,7 +59,6 @@ async function createAdmin() {
 
     console.log('✅ Usuario administrador creado exitosamente!');
     console.log(`   Username: ${username}`);
-    console.log(`   Password: ${password}`);
     console.log(`   ⚠️ IMPORTANTE: Cambia la contraseña después del primer inicio de sesión`);
 
     await pool.end();

@@ -10,8 +10,16 @@ import EditarParto from './components/EditarParto'
 import NotificationSystem from './components/NotificationSystem'
 import GestionUsuarios from './components/GestionUsuarios'
 import { checkAlerts } from './utils/dataParser'
-import { getPartos, createParto, updateParto, deleteParto, checkApiHealth } from './services/apiService'
-import { isAuthenticated, verifyToken, isAdmin } from './services/authService'
+import { getPartos, getAllPartos, createParto, updateParto, deleteParto, checkApiHealth, mergePartoAfterUpdate } from './services/apiService'
+import {
+  isAuthenticated,
+  verifyToken,
+  isAdmin,
+  getUser,
+  getUserDisplayName,
+  puedeEditarParto,
+  puedeEliminarParto,
+} from './services/authService'
 import './App.css'
 
 function App() {
@@ -25,6 +33,12 @@ function App() {
   const [editingParto, setEditingParto] = useState(null)
   const [filter, setFilter] = useState({})
   const [alerts, setAlerts] = useState([])
+  const [notificationLog, setNotificationLog] = useState([])
+
+  const addErrorToLog = (title, message) => {
+    const entry = { type: 'error', title, message, time: new Date().toLocaleString() }
+    setNotificationLog(prev => [...prev.slice(-99), entry])
+  }
 
   // Verificar autenticación al iniciar
   useEffect(() => {
@@ -42,6 +56,13 @@ function App() {
       setCheckingAuth(false)
     }
     checkAuth()
+  }, [])
+
+  // Cuando el token expira (ej. al guardar), cerrar sesión y volver a login
+  useEffect(() => {
+    const handler = () => setAuthenticated(false)
+    window.addEventListener('auth:token-expired', handler)
+    return () => window.removeEventListener('auth:token-expired', handler)
   }, [])
 
   // Cargar datos cuando el usuario esté autenticado
@@ -62,8 +83,8 @@ function App() {
         console.log(`📡 URL de API configurada: ${API_URL}`)
         
         try {
-          // Cargar datos desde la API
-          const partos = await getPartos({ limit: 10000 }) // Obtener todos los partos
+          // Cargar TODOS los partos (paginando por lotes, sin tope que recorte registros)
+          const partos = await getAllPartos()
           console.log(`✅ Datos cargados desde API: ${partos.length} registros`)
           setData(partos)
           
@@ -106,11 +127,9 @@ function App() {
       } catch (error) {
         console.error('❌ Error cargando datos:', error)
         setApiError(error.message || 'Error al cargar los datos')
-        setAlerts([{
-          type: 'error',
-          title: '❌ Error de Conexión',
-          message: `No se pudieron cargar los datos. Verifica que el servidor backend esté ejecutándose en http://localhost:5000`
-        }])
+        const errMsg = `No se pudieron cargar los datos. Verifica que el servidor backend esté ejecutándose.`
+        setAlerts([{ type: 'error', title: '❌ Error de Conexión', message: errMsg }])
+        addErrorToLog('Error de Conexión', errMsg)
       } finally {
         setLoading(false)
       }
@@ -133,30 +152,40 @@ function App() {
   // Manejar nuevo parto
   const handleNuevoParto = () => {
     setShowNuevoParto(true)
-    }
+  }
     
   const handleSaveParto = async (newParto) => {
     try {
+      const user = getUser()
+      const nombreResp = getUserDisplayName()
+      const payload = {
+        ...newParto,
+        registradoPor: nombreResp || user?.username,
+        registradoPorUsername: user?.username || undefined,
+      }
       console.log('💾 Guardando nuevo parto...')
-      const savedParto = await createParto(newParto)
-      console.log('✅ Parto guardado exitosamente:', savedParto.id || savedParto._traceId)
-      setData([...data, savedParto])
+      const savedParto = await createParto(payload)
+      const merged = mergePartoAfterUpdate(payload, savedParto)
+      console.log('✅ Parto guardado exitosamente:', merged.id || merged._traceId)
+      setData([...data, merged])
       setShowNuevoParto(false)
-      // Actualizar alertas
-      const updatedAlerts = checkAlerts([...data, savedParto])
-      setAlerts(updatedAlerts)
+      const systemAlerts = checkAlerts([...data, merged])
+      setAlerts([
+        {
+          type: 'success',
+          title: 'Parto guardado',
+          message: `Registro cargado correctamente. Responsable del llenado: ${nombreResp || user?.username || '—'}.`,
+        },
+        ...systemAlerts,
+      ])
     } catch (error) {
       console.error('❌ Error guardando parto:', error)
       const errorMessage = error.message || 'No se pudo guardar el parto'
       console.error('📋 Mensaje de error completo:', errorMessage)
-      setAlerts([{
-        type: 'error',
-        title: 'Error al Guardar',
-        message: errorMessage
-      }])
-      // No cerrar el modal si hay error, para que el usuario pueda corregir
+      setAlerts([{ type: 'error', title: 'Error al Guardar', message: errorMessage }])
+      addErrorToLog('Error al Guardar', errorMessage)
     }
-        }
+  }
 
   const handleCloseNuevoParto = () => {
     setShowNuevoParto(false)
@@ -164,51 +193,140 @@ function App() {
 
   // Manejar edición
   const handleEdit = (parto) => {
+    if (!puedeEditarParto(parto)) {
+      setAlerts([
+        {
+          type: 'warning',
+          title: 'Sin permiso',
+          message: 'Solo puede editar los partos registrados con su usuario. Consulte a un administrador.',
+        },
+      ])
+      return
+    }
     setEditingParto(parto)
   }
 
   const handleSaveEdit = async (updatedParto) => {
+    if (!puedeEditarParto(updatedParto)) {
+      setAlerts([
+        {
+          type: 'warning',
+          title: 'Sin permiso',
+          message: 'No tiene permiso para guardar cambios en este registro.',
+        },
+      ])
+      return
+    }
+    const idToUpdate = updatedParto._traceId || updatedParto.id
+    const findItemIndex = () => {
+      if (idToUpdate != null && idToUpdate !== '') {
+        const idx = data.findIndex(
+          item =>
+            (item._traceId != null && item._traceId === idToUpdate) ||
+            (item.id != null && String(item.id) === String(idToUpdate))
+        )
+        if (idx >= 0) return idx
+      }
+      const fechaA = (updatedParto.fechaParto || updatedParto.fecha || '').toString().trim()
+      const rutA = (updatedParto.rut || '').toString().trim()
+      const numeroA = (updatedParto.numero || '').toString().trim()
+      return data.findIndex(item => {
+        const fechaB = (item.fechaParto || item.fecha || '').toString().trim()
+        const rutB = (item.rut || '').toString().trim()
+        const numeroB = (item.numero || item.correlativo || '').toString().trim()
+        return (numeroA && numeroB && numeroA === numeroB) || (fechaA && rutA && fechaA === fechaB && rutA === rutB)
+      })
+    }
+
     try {
-      const id = updatedParto.id || updatedParto._traceId
-      const savedParto = await updateParto(id, updatedParto)
-      const updatedData = data.map(item => 
-        (item.id === savedParto.id || item._traceId === savedParto._traceId) ? savedParto : item
-      )
+      const user = getUser()
+      const payload = {
+        ...updatedParto,
+        ultimaModificacionPor: getUserDisplayName() || user?.username,
+        ultimaModificacionUsername: user?.username,
+      }
+      const idForApi = idToUpdate || updatedParto.numero || updatedParto.correlativo
+      const savedParto = idForApi ? await updateParto(idForApi, payload) : null
+      const mergedParto = savedParto ? mergePartoAfterUpdate(payload, savedParto) : payload
+      const idx = findItemIndex()
+      const updatedData =
+        idx >= 0
+          ? data.map((item, i) => (i === idx ? mergedParto : item))
+          : data.map(item =>
+              (item._traceId != null && item._traceId === idToUpdate) ||
+              (item.id != null && String(item.id) === String(idToUpdate))
+                ? mergedParto
+                : item
+            )
       setData(updatedData)
       setEditingParto(null)
-      // Actualizar alertas
       const updatedAlerts = checkAlerts(updatedData)
       setAlerts(updatedAlerts)
     } catch (error) {
       console.error('Error actualizando parto:', error)
-      setAlerts([{
-        type: 'error',
-        title: 'Error al Actualizar',
-        message: error.message || 'No se pudo actualizar el parto'
-      }])
+      const errorMessage = error.message || 'No se pudo actualizar el parto'
+      setAlerts([{ type: 'error', title: 'Error al Actualizar', message: errorMessage }])
+      addErrorToLog('Error al Actualizar', errorMessage)
+      const idx = findItemIndex()
+      if (idx >= 0) {
+        setData(prev => prev.map((item, i) => (i === idx ? { ...updatedParto } : item)))
+        setEditingParto(null)
+        setAlerts(prev => [
+          ...prev,
+          { type: 'warning', title: 'Cambios solo en pantalla', message: 'Los cambios se aplicaron en la tabla pero no se guardaron en el servidor. Comprueba la conexión con la API.' }
+        ])
+      }
     }
   }
 
   const handleCloseEdit = () => {
     setEditingParto(null)
-    }
+  }
     
   // Manejar eliminación
-  const handleDelete = async (traceId) => {
+  const handleDelete = async (traceId, partoItem) => {
+    const item =
+      partoItem ||
+      data.find(
+        (p) =>
+          p.numero === traceId ||
+          p.id === traceId ||
+          p._traceId === traceId ||
+          String(p.correlativo) === String(traceId)
+      )
+    if (item && !puedeEliminarParto(item)) {
+      setAlerts([
+        {
+          type: 'warning',
+          title: 'Sin permiso',
+          message: 'Solo puede eliminar los partos registrados con su usuario.',
+        },
+      ])
+      return
+    }
+    const apiDeleteId = item
+      ? (item.id ?? item._traceId ?? item.traceId ?? traceId)
+      : traceId
     try {
-      await deleteParto(traceId)
-      const updatedData = data.filter(item => item._traceId !== traceId && item.id !== traceId)
+      const result = await deleteParto(apiDeleteId)
+      const deletedId = result?.id
+      const updatedData = deletedId
+        ? data.filter((row) => String(row.id) !== String(deletedId))
+        : data.filter(
+            (row) =>
+              row._traceId !== apiDeleteId &&
+              row.id !== apiDeleteId &&
+              String(row.traceId) !== String(apiDeleteId)
+          )
       setData(updatedData)
       // Actualizar alertas
       const updatedAlerts = checkAlerts(updatedData)
       setAlerts(updatedAlerts)
     } catch (error) {
       console.error('Error eliminando parto:', error)
-      setAlerts([{
-        type: 'error',
-        title: 'Error al Eliminar',
-        message: error.message || 'No se pudo eliminar el parto'
-      }])
+      const errorMessage = error.message || 'No se pudo eliminar el parto'
+      setAlerts([{ type: 'error', title: 'Error al Eliminar', message: errorMessage }])
+      addErrorToLog('Error al Eliminar', errorMessage)
     }
   }
 
@@ -261,7 +379,11 @@ function App() {
     <div className="App">
       <Header onNuevoParto={handleNuevoParto} onLogout={handleLogout} />
       
-      <NotificationSystem notifications={alerts} />
+      <NotificationSystem
+        notifications={alerts}
+        notificationLog={notificationLog}
+        onClearLog={() => setNotificationLog([])}
+      />
       
       <main className="main-content">
         <div className="view-selector">

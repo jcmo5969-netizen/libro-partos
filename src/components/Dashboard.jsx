@@ -1,8 +1,6 @@
 import React, { useMemo, useState, useRef } from 'react'
 import { motion } from 'framer-motion'
-import DashboardInsights from './DashboardInsights'
-import ComparativeAnalysis from './ComparativeAnalysis'
-import PeriodRecommendations from './PeriodRecommendations'
+import { Baby, Heart, Scissors, CalendarCheck, Siren, Stethoscope, Home, User, Users, ClipboardList, Syringe, Activity } from 'lucide-react'
 import DataVisualizer from './DataVisualizer'
 import './Dashboard.css'
 
@@ -54,6 +52,8 @@ function Dashboard({ data, onFilterChange }) {
         vaginales: 0,
         cesareasElectivas: 0,
         cesareasUrgentes: 0,
+        totalCesareas: 0,
+        instrumentales: 0,
         extrahospitalarios: 0,
         primiparas: 0,
         multiparas: 0,
@@ -65,10 +65,11 @@ function Dashboard({ data, onFilterChange }) {
     console.log(`Dashboard: Procesando ${dataToUse.length} registros`)
     const total = dataToUse.length
     
-    // Tipos de parto - usando nombres exactos (case-insensitive)
+    // Tipos de parto: vaginal eutócico, instrumental y cesárea son categorías
+    // mutuamente excluyentes; así total = vaginales + instrumentales + cesáreas
     const vaginales = dataToUse.filter(item => {
       const tipo = item.tipoParto ? String(item.tipoParto).toUpperCase().trim() : ''
-      return tipo.includes('VAGINAL')
+      return tipo.includes('VAGINAL') && !tipo.includes('INSTRUMENTAL')
     }).length
     
     const cesareasElectivas = dataToUse.filter(item => {
@@ -79,6 +80,13 @@ function Dashboard({ data, onFilterChange }) {
     const cesareasUrgentes = dataToUse.filter(item => {
       const tipo = item.tipoParto ? String(item.tipoParto).toUpperCase().trim() : ''
       return tipo.includes('CES URG') || tipo === 'CES URG'
+    }).length
+
+    const totalCesareas = cesareasElectivas + cesareasUrgentes
+
+    const instrumentales = dataToUse.filter(item => {
+      const tipo = item.tipoParto ? String(item.tipoParto).toUpperCase().trim() : ''
+      return tipo.includes('INSTRUMENTAL')
     }).length
     
     const extrahospitalarios = dataToUse.filter(item => {
@@ -120,6 +128,8 @@ function Dashboard({ data, onFilterChange }) {
       vaginales,
       cesareasElectivas,
       cesareasUrgentes,
+      totalCesareas,
+      instrumentales,
       extrahospitalarios,
       primiparas,
       multiparas,
@@ -176,6 +186,9 @@ function Dashboard({ data, onFilterChange }) {
           break
         case 'PARTOS VAGINALES':
           filter = { tipoParto: 'VAGINAL' }
+          break
+        case 'INSTRUMENTALES':
+          filter = { tipoParto: 'INSTRUMENTAL' }
           break
         case 'CESÁREAS ELECTIVAS':
           filter = { tipoParto: 'CES ELE' }
@@ -234,12 +247,15 @@ function Dashboard({ data, onFilterChange }) {
 
   // Calcular porcentajes para mostrar en las tarjetas
   const totalPartos = stats.total || 1 // Evitar división por cero
-  
+  // Para la primera fila: vaginal + instrumental + cesáreas = 100%
+  const totalTiposParto = (stats.vaginales || 0) + (stats.instrumentales || 0) + (stats.totalCesareas || 0) || 1
+
+
   const cards = [
-    { 
-      label: 'TOTAL PARTOS', 
-      value: stats.total, 
-      icon: '👶',
+    {
+      label: 'TOTAL PARTOS',
+      value: stats.total,
+      icon: <Baby size={34} color="#ff6b9d" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #ff6b9d, #ff8fb3)',
       iconBg: 'rgba(255, 107, 157, 0.15)',
       hasDropdown: true,
@@ -247,80 +263,100 @@ function Dashboard({ data, onFilterChange }) {
       clickable: true,
       trend: null
     },
-    { 
-      label: 'PARTOS VAGINALES', 
-      value: stats.vaginales, 
-      icon: '💚',
+    {
+      label: 'PARTOS VAGINALES',
+      value: stats.vaginales,
+      icon: <Heart size={34} color="#4caf50" strokeWidth={1.8} fill="#4caf50"/>,
       gradient: 'linear-gradient(135deg, #4caf50, #66bb6a)',
       iconBg: 'rgba(76, 175, 80, 0.15)',
-      percentage: totalPartos > 0 ? ((stats.vaginales / totalPartos) * 100).toFixed(1) : '0',
+      percentage: ((stats.vaginales || 0) / totalTiposParto * 100).toFixed(1),
       clickable: true,
       trend: 'positive'
     },
-    { 
-      label: 'CESÁREAS ELECTIVAS', 
-      value: stats.cesareasElectivas, 
-      icon: '🩺',
+    {
+      label: 'INSTRUMENTALES',
+      value: stats.instrumentales,
+      icon: <Activity size={34} color="#607d8b" strokeWidth={2}/>,
+      gradient: 'linear-gradient(135deg, #607d8b, #90a4ae)',
+      iconBg: 'rgba(96, 125, 139, 0.15)',
+      percentage: ((stats.instrumentales || 0) / totalTiposParto * 100).toFixed(1),
+      clickable: true,
+      trend: 'neutral'
+    },
+    {
+      label: 'TOTAL CESÁREAS',
+      value: stats.totalCesareas,
+      icon: <Scissors size={34} color="#795548" strokeWidth={1.8}/>,
+      gradient: 'linear-gradient(135deg, #795548, #a1887f)',
+      iconBg: 'rgba(121, 85, 72, 0.15)',
+      percentage: ((stats.totalCesareas || 0) / totalTiposParto * 100).toFixed(1),
+      clickable: false,
+      trend: 'neutral'
+    },
+    {
+      label: 'CESÁREAS ELECTIVAS',
+      value: stats.cesareasElectivas,
+      icon: <CalendarCheck size={34} color="#ff9800" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #ff9800, #ffb74d)',
       iconBg: 'rgba(255, 152, 0, 0.15)',
       percentage: totalPartos > 0 ? ((stats.cesareasElectivas / totalPartos) * 100).toFixed(1) : '0',
       clickable: true,
       trend: 'neutral'
     },
-    { 
-      label: 'CESÁREAS URGENTES', 
-      value: stats.cesareasUrgentes, 
-      icon: '⚠️',
+    {
+      label: 'CESÁREAS URGENTES',
+      value: stats.cesareasUrgentes,
+      icon: <Siren size={34} color="#f44336" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #f44336, #e57373)',
       iconBg: 'rgba(244, 67, 54, 0.15)',
       percentage: totalPartos > 0 ? ((stats.cesareasUrgentes / totalPartos) * 100).toFixed(1) : '0',
       clickable: true,
       trend: 'attention'
     },
-    { 
-      label: 'EXTRAHOSPITALARIOS', 
-      value: stats.extrahospitalarios, 
-      icon: '🏥',
+    {
+      label: 'EXTRAHOSPITALARIOS',
+      value: stats.extrahospitalarios,
+      icon: <Home size={34} color="#2196f3" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #2196f3, #64b5f6)',
       iconBg: 'rgba(33, 150, 243, 0.15)',
       percentage: totalPartos > 0 ? ((stats.extrahospitalarios / totalPartos) * 100).toFixed(1) : '0',
       clickable: true,
       trend: 'neutral'
     },
-    { 
-      label: 'PRIMÍPARAS', 
-      value: stats.primiparas, 
-      icon: '👩',
+    {
+      label: 'PRIMÍPARAS',
+      value: stats.primiparas,
+      icon: <User size={34} color="#9c27b0" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #9c27b0, #ba68c8)',
       iconBg: 'rgba(156, 39, 176, 0.15)',
       percentage: totalPartos > 0 ? ((stats.primiparas / totalPartos) * 100).toFixed(1) : '0',
       clickable: true,
       trend: 'positive'
     },
-    { 
-      label: 'MULTÍPARAS', 
-      value: stats.multiparas, 
-      icon: '👨‍👩‍👧',
+    {
+      label: 'MULTÍPARAS',
+      value: stats.multiparas,
+      icon: <Users size={34} color="#e91e63" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #e91e63, #f06292)',
       iconBg: 'rgba(233, 30, 99, 0.15)',
       percentage: totalPartos > 0 ? ((stats.multiparas / totalPartos) * 100).toFixed(1) : '0',
       clickable: true,
       trend: 'positive'
     },
-    { 
-      label: 'CON PLAN DE PARTO', 
-      value: stats.conPlanParto, 
-      icon: '📋',
+    {
+      label: 'CON PLAN DE PARTO',
+      value: stats.conPlanParto,
+      icon: <ClipboardList size={34} color="#00bcd4" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #00bcd4, #4dd0e1)',
       iconBg: 'rgba(0, 188, 212, 0.15)',
       percentage: totalPartos > 0 ? ((stats.conPlanParto / totalPartos) * 100).toFixed(1) : '0',
       clickable: true,
       trend: 'positive'
     },
-    { 
-      label: 'CON INDUCCIÓN', 
-      value: stats.conInduccion, 
-      icon: '💉',
+    {
+      label: 'CON INDUCCIÓN',
+      value: stats.conInduccion,
+      icon: <Syringe size={34} color="#ff5722" strokeWidth={1.8}/>,
       gradient: 'linear-gradient(135deg, #ff5722, #ff8a65)',
       iconBg: 'rgba(255, 87, 34, 0.15)',
       percentage: totalPartos > 0 ? ((stats.conInduccion / totalPartos) * 100).toFixed(1) : '0',
@@ -586,19 +622,6 @@ function Dashboard({ data, onFilterChange }) {
           </motion.div>
         ))}
       </div>
-      
-      {/* Componente de Insights Inteligentes */}
-      <DashboardInsights 
-        data={data} 
-        selectedKPI={selectedKPI}
-        selectedMonth={selectedMonth}
-      />
-      
-      {/* Análisis Comparativo */}
-      <ComparativeAnalysis data={data} selectedMonth={selectedMonth} />
-      
-      {/* Recomendaciones Personalizadas por Período */}
-      <PeriodRecommendations data={data} selectedMonth={selectedMonth} />
       
       {/* Visualizador de Datos con Gráficos */}
       <DataVisualizer data={data} />

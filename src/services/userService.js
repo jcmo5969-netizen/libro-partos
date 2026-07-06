@@ -13,6 +13,7 @@ export async function getUsuarios() {
   try {
     const response = await fetch(`${API_BASE_URL}/usuarios`, {
       method: 'GET',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -38,6 +39,7 @@ export async function createUsuario(usuarioData) {
   try {
     const response = await fetch(`${API_BASE_URL}/usuarios`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -64,6 +66,7 @@ export async function updateUsuario(id, usuarioData) {
   try {
     const response = await fetch(`${API_BASE_URL}/usuarios/${id}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -90,6 +93,7 @@ export async function deleteUsuario(id) {
   try {
     const response = await fetch(`${API_BASE_URL}/usuarios/${id}`, {
       method: 'DELETE',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
