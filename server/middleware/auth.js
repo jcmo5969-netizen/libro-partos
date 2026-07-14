@@ -39,7 +39,7 @@ export const authenticateToken = async (req, res, next) => {
 
     // Verificar que el usuario existe y está activo
     const result = await pool.query(
-      'SELECT id, username, nombre_completo, email, rol, activo FROM usuarios WHERE id = $1',
+      'SELECT id, username, nombre_completo, email, rol, activo, must_change_password FROM usuarios WHERE id = $1',
       [decoded.userId]
     );
 
@@ -65,6 +65,19 @@ export const authenticateToken = async (req, res, next) => {
 /**
  * Middleware para verificar que el usuario es ADMIN
  */
+/**
+ * Bloquea el acceso a rutas protegidas hasta que el usuario cambie su contraseña.
+ */
+export const requirePasswordChanged = (req, res, next) => {
+  if (req.user?.must_change_password) {
+    return res.status(403).json({
+      error: 'Debe cambiar su contraseña antes de continuar',
+      code: 'MUST_CHANGE_PASSWORD',
+    });
+  }
+  next();
+};
+
 export const requireAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Autenticación requerida' });

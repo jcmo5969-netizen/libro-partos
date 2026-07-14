@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import Login from './components/Login'
+import ChangePassword from './components/ChangePassword'
 import Header from './components/Header'
 import Dashboard from './components/Dashboard'
 import Tabla from './components/Tabla'
@@ -17,6 +18,7 @@ import {
   isAdmin,
   getUser,
   getUserDisplayName,
+  needsPasswordChange,
   puedeEditarParto,
   puedeEliminarParto,
 } from './services/authService'
@@ -24,6 +26,7 @@ import './App.css'
 
 function App() {
   const [authenticated, setAuthenticated] = useState(false)
+  const [mustChange, setMustChange] = useState(false)
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(true)
@@ -47,6 +50,7 @@ function App() {
         const user = await verifyToken()
         if (user) {
           setAuthenticated(true)
+          setMustChange(needsPasswordChange())
         } else {
           setAuthenticated(false)
         }
@@ -67,7 +71,7 @@ function App() {
 
   // Cargar datos cuando el usuario esté autenticado
   useEffect(() => {
-    if (!authenticated) {
+    if (!authenticated || mustChange) {
       setLoading(false)
       return
     }
@@ -136,11 +140,16 @@ function App() {
     }
     
     loadData()
-  }, [authenticated])
+  }, [authenticated, mustChange])
 
   const handleLoginSuccess = () => {
     setAuthenticated(true)
+    setMustChange(needsPasswordChange())
     setCurrentView('dashboard') // Asegurar que la vista por defecto sea el dashboard
+  }
+
+  const handlePasswordChanged = () => {
+    setMustChange(false)
   }
 
   const handleLogout = () => {
@@ -357,6 +366,10 @@ function App() {
 
   if (!authenticated) {
     return <Login onLoginSuccess={handleLoginSuccess} />
+  }
+
+  if (mustChange) {
+    return <ChangePassword onDone={handlePasswordChanged} />
   }
 
   if (loading) {

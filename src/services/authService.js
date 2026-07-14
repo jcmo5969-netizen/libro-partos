@@ -65,6 +65,14 @@ export function isAdmin() {
   return getUserRole() === 'ADMIN';
 }
 
+/**
+ * Indica si el usuario debe cambiar su contraseña antes de usar el sistema.
+ */
+export function needsPasswordChange() {
+  const user = getUser();
+  return user?.mustChangePassword === true;
+}
+
 /** Nombre para mostrar (trazabilidad de partos) */
 export function getUserDisplayName() {
   const u = getUser();
@@ -124,6 +132,31 @@ export async function login(username, password) {
     console.error('Error en login:', error);
     throw error;
   }
+}
+
+/**
+ * Cambia la contraseña del usuario autenticado (primer acceso obligatorio).
+ */
+export async function changePassword(currentPassword, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Error al cambiar la contraseña');
+  }
+
+  const data = await response.json();
+  if (data.user) {
+    setUser(data.user);
+  }
+  return data;
 }
 
 /**

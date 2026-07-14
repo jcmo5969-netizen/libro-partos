@@ -75,7 +75,7 @@ async function main() {
     const password = generatePassword();
     const hash = await bcrypt.hash(password, 12);
     await pool.query(
-      'UPDATE usuarios SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE usuarios SET password_hash = $1, must_change_password = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hash, user.id]
     );
     nuevas.push({ username: user.username, password });

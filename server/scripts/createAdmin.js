@@ -36,7 +36,7 @@ async function createAdmin() {
       if (process.argv.includes('--update-password')) {
         const passwordHash = await bcrypt.hash(password, 10);
         await pool.query(
-          'UPDATE usuarios SET password_hash = $1, rol = $2, activo = $3 WHERE username = $4',
+          'UPDATE usuarios SET password_hash = $1, rol = $2, activo = $3, must_change_password = TRUE WHERE username = $4',
           [passwordHash, 'ADMIN', true, username]
         );
         console.log('✅ Contraseña del administrador actualizada');
@@ -53,7 +53,7 @@ async function createAdmin() {
 
     // Crear usuario administrador
     const result = await pool.query(
-      'INSERT INTO usuarios (username, password_hash, nombre_completo, email, rol, activo) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username',
+      'INSERT INTO usuarios (username, password_hash, nombre_completo, email, rol, activo, must_change_password) VALUES ($1, $2, $3, $4, $5, $6, TRUE) RETURNING id, username',
       [username, passwordHash, nombreCompleto, email, 'ADMIN', true]
     );
 

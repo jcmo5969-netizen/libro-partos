@@ -18,6 +18,7 @@ const idempotentMigrations = [
   'add_peso_talla_registrado.sql',
   'add_imc_materno.sql',
   'widen_grupo_rh.sql',
+  'add_must_change_password.sql',
 ];
 
 export async function runAutoMigrations() {

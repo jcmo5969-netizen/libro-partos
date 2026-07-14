@@ -8,7 +8,7 @@ import { runAutoMigrations } from './db/autoMigrate.js';
 import partosRouter from './routes/partos.js';
 import authRouter from './routes/auth.js';
 import usuariosRouter from './routes/usuarios.js';
-import { authenticateToken } from './middleware/auth.js';
+import { authenticateToken, requirePasswordChanged } from './middleware/auth.js';
 import { loginLimiter } from './middleware/rateLimit.js';
 
 const app = express();
@@ -144,7 +144,7 @@ app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRouter);
 
 // Rutas API protegidas (requieren autenticación)
-app.use('/api/partos', authenticateToken, partosRouter);
+app.use('/api/partos', authenticateToken, requirePasswordChanged, partosRouter);
 app.use('/api/usuarios', usuariosRouter);
 
 // Manejo de errores

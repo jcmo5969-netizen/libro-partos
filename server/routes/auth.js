@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db/connection.js';
-import { signToken, verifyToken } from '../middleware/auth.js';
+import { signToken, verifyToken, authenticateToken } from '../middleware/auth.js';
 import { sendError } from '../utils/httpError.js';
 
 const router = express.Router();
@@ -32,7 +32,7 @@ router.post('/login', async (req, res) => {
 
     // Buscar usuario
     const result = await pool.query(
-      'SELECT id, username, password_hash, nombre_completo, email, rol, activo FROM usuarios WHERE username = $1',
+      'SELECT id, username, password_hash, nombre_completo, email, rol, activo, must_change_password FROM usuarios WHERE username = $1',
       [username]
     );
 
@@ -75,7 +75,8 @@ router.post('/login', async (req, res) => {
         username: user.username,
         nombreCompleto: user.nombre_completo,
         email: user.email,
-        rol: user.rol
+        rol: user.rol,
+        mustChangePassword: user.must_change_password === true,
       }
     });
   } catch (error) {
@@ -125,7 +126,7 @@ router.get('/me', async (req, res) => {
     const decoded = verifyToken(token);
 
     const result = await pool.query(
-      'SELECT id, username, nombre_completo, email, rol, activo FROM usuarios WHERE id = $1',
+      'SELECT id, username, nombre_completo, email, rol, activo, must_change_password FROM usuarios WHERE id = $1',
       [decoded.userId]
     );
 
@@ -139,7 +140,8 @@ router.get('/me', async (req, res) => {
       username: user.username,
       nombreCompleto: user.nombre_completo,
       email: user.email,
-      rol: user.rol
+      rol: user.rol,
+      mustChangePassword: user.must_change_password === true,
     });
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {
@@ -149,6 +151,64 @@ router.get('/me', async (req, res) => {
       return res.status(403).json({ error: 'Token expirado' });
     }
     return sendError(res, 500, 'Error al verificar usuario', error);
+  }
+});
+
+/**
+ * POST /api/auth/change-password
+ * Cambiar la contraseña del usuario autenticado (obligatorio en el primer acceso).
+ */
+router.post('/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'La contraseña actual y la nueva son requeridas' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres' });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'La nueva contraseña debe ser diferente a la actual' });
+    }
+
+    const result = await pool.query(
+      'SELECT id, password_hash FROM usuarios WHERE id = $1',
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const user = result.rows[0];
+    const isValidPassword = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'La contraseña actual es incorrecta' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(
+      'UPDATE usuarios SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, user.id]
+    );
+
+    res.json({
+      message: 'Contraseña actualizada correctamente',
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        nombreCompleto: req.user.nombre_completo,
+        email: req.user.email,
+        rol: req.user.rol,
+        mustChangePassword: false,
+      },
+    });
+  } catch (error) {
+    return sendError(res, 500, 'Error al cambiar la contraseña', error);
   }
 });
 

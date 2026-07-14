@@ -1,13 +1,14 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db/connection.js';
-import { authenticateToken, requireAdmin } from '../middleware/auth.js';
+import { authenticateToken, requireAdmin, requirePasswordChanged } from '../middleware/auth.js';
 import { sendError } from '../utils/httpError.js';
 
 const router = express.Router();
 
 // Todas las rutas requieren autenticación y rol ADMIN
 router.use(authenticateToken);
+router.use(requirePasswordChanged);
 router.use(requireAdmin);
 
 /**
@@ -106,7 +107,7 @@ router.post('/', async (req, res) => {
 
     // Crear usuario
     const result = await pool.query(
-      'INSERT INTO usuarios (username, password_hash, nombre_completo, email, rol) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, nombre_completo, email, rol, activo, created_at',
+      'INSERT INTO usuarios (username, password_hash, nombre_completo, email, rol, must_change_password) VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id, username, nombre_completo, email, rol, activo, created_at',
       [username, passwordHash, nombreCompleto, email || null, rol || 'USUARIO']
     );
 
@@ -178,6 +179,9 @@ router.put('/:id', async (req, res) => {
       const passwordHash = await bcrypt.hash(password, 10);
       updates.push(`password_hash = $${paramCount}`);
       values.push(passwordHash);
+      paramCount++;
+      updates.push(`must_change_password = $${paramCount}`);
+      values.push(true);
     }
 
     if (nombreCompleto) {
