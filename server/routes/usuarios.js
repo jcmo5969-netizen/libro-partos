@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import pool from '../db/connection.js';
 import { authenticateToken, requireAdmin, requirePasswordChanged } from '../middleware/auth.js';
 import { sendError } from '../utils/httpError.js';
+import { validatePassword } from '../utils/password.js';
 
 const router = express.Router();
 
@@ -87,6 +88,11 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Usuario, contraseña y nombre completo son requeridos' });
     }
 
+    const passwordError = validatePassword(password, { username });
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
     // Validar rol
     if (rol && !['ADMIN', 'USUARIO'].includes(rol)) {
       return res.status(400).json({ error: 'Rol debe ser ADMIN o USUARIO' });
@@ -151,6 +157,13 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Rol debe ser ADMIN o USUARIO' });
     }
 
+    if (password) {
+      const passwordError = validatePassword(password, { username });
+      if (passwordError) {
+        return res.status(400).json({ error: passwordError });
+      }
+    }
+
     // Verificar que el username no esté en uso por otro usuario
     if (username) {
       const usernameCheck = await pool.query(
@@ -182,6 +195,8 @@ router.put('/:id', async (req, res) => {
       paramCount++;
       updates.push(`must_change_password = $${paramCount}`);
       values.push(true);
+      // Revoca cualquier sesión activa de este usuario con la contraseña anterior.
+      updates.push(`token_version = token_version + 1`);
     }
 
     if (nombreCompleto) {

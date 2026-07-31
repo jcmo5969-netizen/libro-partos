@@ -17,6 +17,9 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
+// SSL deshabilitado por defecto (compatible con Postgres local/loopback sin TLS
+// configurado). Si la BD corre en otro host de la LAN, definir DB_SSL=1 (y
+// DB_SSL_REJECT_UNAUTHORIZED=0 solo si el certificado no es verificable).
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
@@ -26,6 +29,10 @@ const pool = new Pool({
   max: 20, // Máximo de conexiones en el pool
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
+  ssl:
+    process.env.DB_SSL === '1'
+      ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== '0' }
+      : undefined,
 });
 
 // Manejar errores del pool

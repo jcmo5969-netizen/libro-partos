@@ -13,7 +13,14 @@ module.exports = {
       // de arrancar PM2. Sin fallbacks embebidos.
       JWT_SECRET: process.env.JWT_SECRET,
       ENABLE_HSTS: '0',
-      CORS_ALLOW_PRIVATE_NETWORK: '1'
+      // Antes: CORS_ALLOW_PRIVATE_NETWORK='1' aceptaba con credentials:true
+      // cualquier origen de TODA la red privada (10.0.0.0/8, 172.16.0.0/12,
+      // 192.168.0.0/16), no solo el frontend real. Se acota al origen conocido
+      // (ver VITE_API_URL en ecosystem.frontend.cjs). Si existe otro origen LAN
+      // legítimo que dependía del wildcard, agrégalo aquí separado por comas en
+      // vez de volver a poner CORS_ALLOW_PRIVATE_NETWORK en '1'.
+      CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://10.69.204.49:3002',
+      CORS_ALLOW_PRIVATE_NETWORK: '0'
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',

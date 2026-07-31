@@ -39,7 +39,7 @@ export const authenticateToken = async (req, res, next) => {
 
     // Verificar que el usuario existe y está activo
     const result = await pool.query(
-      'SELECT id, username, nombre_completo, email, rol, activo, must_change_password FROM usuarios WHERE id = $1',
+      'SELECT id, username, nombre_completo, email, rol, activo, must_change_password, token_version FROM usuarios WHERE id = $1',
       [decoded.userId]
     );
 
@@ -47,8 +47,16 @@ export const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ error: 'Usuario no válido o inactivo' });
     }
 
+    // Permite revocar sesiones ya emitidas (p. ej. tras un cambio de contraseña)
+    // sin esperar a que el JWT expire por su cuenta. Tokens emitidos antes de
+    // este mecanismo no llevan tokenVersion; se tratan como versión 0.
+    const user = result.rows[0];
+    if ((decoded.tokenVersion || 0) !== user.token_version) {
+      return res.status(401).json({ error: 'Sesión inválida o revocada. Inicia sesión nuevamente.' });
+    }
+
     // Agregar información del usuario al request
-    req.user = result.rows[0];
+    req.user = user;
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {

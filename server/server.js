@@ -9,7 +9,7 @@ import partosRouter from './routes/partos.js';
 import authRouter from './routes/auth.js';
 import usuariosRouter from './routes/usuarios.js';
 import { authenticateToken, requirePasswordChanged } from './middleware/auth.js';
-import { loginLimiter } from './middleware/rateLimit.js';
+import { loginLimiter, apiLimiter } from './middleware/rateLimit.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -115,19 +115,25 @@ app.use(cors(corsOptions));
 // Manejar preflight requests explícitamente
 app.options('*', cors(corsOptions));
 
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+// El formulario de parto es JSON de texto (sin adjuntos/archivos); 2mb es holgado
+// y acota la superficie de DoS por payloads grandes frente al 10mb anterior.
+app.use(bodyParser.json({ limit: '2mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser());
 
-// Logging de requests para debugging CORS
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    console.log(`🔍 Preflight request: ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
-  } else {
-    console.log(`📥 Request: ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
-  }
-  next();
-});
+// Logging de requests para debugging CORS — opt-in vía DEBUG_HTTP=1. Por defecto
+// apagado: sin rotación de logs configurada en PM2, este log en cada request
+// infla server/logs/ innecesariamente en operación normal.
+if (process.env.DEBUG_HTTP === '1') {
+  app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+      console.log(`🔍 Preflight request: ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
+    } else {
+      console.log(`📥 Request: ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
+    }
+    next();
+  });
+}
 
 // Health check
 app.get('/health', (req, res) => {
@@ -144,8 +150,8 @@ app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRouter);
 
 // Rutas API protegidas (requieren autenticación)
-app.use('/api/partos', authenticateToken, requirePasswordChanged, partosRouter);
-app.use('/api/usuarios', usuariosRouter);
+app.use('/api/partos', apiLimiter, authenticateToken, requirePasswordChanged, partosRouter);
+app.use('/api/usuarios', apiLimiter, usuariosRouter);
 
 // Manejo de errores
 app.use((err, req, res, next) => {

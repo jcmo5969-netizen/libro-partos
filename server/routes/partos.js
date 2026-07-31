@@ -1,11 +1,81 @@
 import express from 'express';
 import pool from '../db/connection.js';
 import { sendError } from '../utils/httpError.js';
+import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+// Tope duro de paginación: evita que un cliente pida toda la tabla (PHI) en una
+// sola respuesta (p. ej. ?limit=999999999). getAllPartos() en el frontend ya
+// pagina en lotes de 1000, así que este tope no afecta el uso normal.
+const MAX_PAGE_LIMIT = 1000;
+
+function clampLimit(value) {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 100;
+  return Math.min(parsed, MAX_PAGE_LIMIT);
+}
+
+function clampOffset(value) {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
+}
+
+/** Partos extrahospitalarios no reciben correlativo y se guardan con tipo EXTRAHOSPITALARIO. */
+function isExtrahospitalario(tipoParto) {
+  return String(tipoParto || '').toUpperCase().includes('EXTRAHOSPITALARIO');
+}
+
+async function getNextCorrelativo() {
+  const result = await pool.query("SELECT nextval('partos_correlativo_seq') AS val");
+  return parseInt(result.rows[0].val, 10);
+}
+
+async function fetchPartoRow(id) {
+  if (isUuid(id)) {
+    const result = await pool.query(
+      'SELECT tipo_parto, correlativo FROM partos WHERE id = $1::uuid OR trace_id = $2',
+      [id, id]
+    );
+    return result.rows[0] || null;
+  }
+  const result = await pool.query(
+    'SELECT tipo_parto, correlativo FROM partos WHERE trace_id = $1',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+function applyCorrelativoOnCreate(transformedData) {
+  if (isExtrahospitalario(transformedData.tipo_parto)) {
+    transformedData.tipo_parto = 'EXTRAHOSPITALARIO';
+    transformedData.correlativo = null;
+    return;
+  }
+  delete transformedData.correlativo;
+}
+
+async function applyCorrelativoOnUpdate(transformedData, existingRow) {
+  const newTipo = transformedData.tipo_parto ?? existingRow?.tipo_parto;
+
+  if (isExtrahospitalario(newTipo)) {
+    transformedData.tipo_parto = 'EXTRAHOSPITALARIO';
+    transformedData.correlativo = null;
+    return;
+  }
+
+  const wasExtrahospitalario = isExtrahospitalario(existingRow?.tipo_parto);
+  if (wasExtrahospitalario && existingRow?.correlativo == null) {
+    transformedData.correlativo = await getNextCorrelativo();
+    return;
+  }
+
+  delete transformedData.correlativo;
 }
 
 /**
@@ -43,6 +113,26 @@ async function assertPuedeModificarParto(id, user) {
   }
 
   return { ok: false, status: 403, error: 'No autorizado para modificar este parto' };
+}
+
+/**
+ * `registrado_por_username` llega desde el cliente (quién atendió, puede diferir de
+ * quién digita el registro) y assertPuedeModificarParto() lo usa para decidir quién
+ * puede editar/borrar. Sin esta validación, cualquier usuario podría escribir un
+ * username inventado o de un tercero y así ceder/perder derechos de edición sobre
+ * el registro que crea. Solo se acepta si coincide con el propio usuario autenticado
+ * o con una cuenta activa real; en cualquier otro caso se usa el usuario autenticado.
+ */
+async function resolveRegistradoPorUsername(candidate, authenticatedUsername) {
+  if (!candidate) return authenticatedUsername;
+  if (String(candidate).toLowerCase() === String(authenticatedUsername).toLowerCase()) {
+    return candidate;
+  }
+  const result = await pool.query(
+    'SELECT username FROM usuarios WHERE LOWER(username) = LOWER($1) AND activo = TRUE',
+    [candidate]
+  );
+  return result.rows.length > 0 ? result.rows[0].username : authenticatedUsername;
 }
 
 /** No sobrescribir con NULL en UPDATE si el cliente envía string vacío (p. ej. grupo RH no mapeado en el formulario). */
@@ -136,16 +226,17 @@ router.get('/', async (req, res) => {
     query += ` ORDER BY correlativo DESC NULLS LAST, fecha_parto DESC, hora_parto DESC`;
     paramCount++;
     query += ` LIMIT $${paramCount}`;
-    params.push(parseInt(limit));
+    params.push(clampLimit(limit));
     paramCount++;
     query += ` OFFSET $${paramCount}`;
-    params.push(parseInt(offset));
+    params.push(clampOffset(offset));
 
     const result = await pool.query(query, params);
     
     // Transformar los datos al formato esperado por el frontend
     const partos = result.rows.map(row => transformRowToFrontendFormat(row));
-    
+
+    logAudit(req, 'LIST', null, `count=${partos.length}`);
     res.json(partos);
   } catch (error) {
     console.error('Error obteniendo partos:', error);
@@ -183,7 +274,8 @@ router.get('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Parto no encontrado' });
     }
-    
+
+    logAudit(req, 'READ', result.rows[0].id);
     res.json(transformRowToFrontendFormat(result.rows[0]));
   } catch (error) {
     console.error('Error obteniendo parto:', error);
@@ -207,13 +299,13 @@ router.post('/', async (req, res) => {
     // Agregar creado_por y registrado_por desde el usuario autenticado
     if (req.user && req.user.username) {
       transformedData.creado_por = req.user.username;
-      if (!transformedData.registrado_por_username) {
-        transformedData.registrado_por_username = req.user.username;
-      }
+      transformedData.registrado_por_username = await resolveRegistradoPorUsername(
+        transformedData.registrado_por_username,
+        req.user.username
+      );
     }
     
-    // No incluir correlativo en el INSERT, se generará automáticamente
-    delete transformedData.correlativo;
+    applyCorrelativoOnCreate(transformedData);
 
     // Calcular IMC materno automáticamente
     if (transformedData.peso_materno && transformedData.talla_materna) {
@@ -267,6 +359,7 @@ router.post('/', async (req, res) => {
     const result = await pool.query(query, values);
 
     console.log('✅ Parto creado exitosamente:', result.rows[0].id);
+    logAudit(req, 'CREATE', result.rows[0].id);
     res.status(201).json(transformRowToFrontendFormat(result.rows[0]));
   } catch (error) {
     if (error.statusCode === 400) {
@@ -301,6 +394,24 @@ router.put('/:id', async (req, res) => {
     }
 
     const transformedData = transformFrontendToDbFormat(partoData, true); // isUpdate=true: permite limpiar campos vacíos
+
+    // creado_por es el registro de auditoría de quién creó el parto y además el
+    // respaldo de assertPuedeModificarParto() cuando no hay registrado_por_username.
+    // Nunca debe poder reescribirse desde el body de un UPDATE.
+    delete transformedData.creado_por;
+
+    if (transformedData.registrado_por_username) {
+      transformedData.registrado_por_username = await resolveRegistradoPorUsername(
+        transformedData.registrado_por_username,
+        req.user.username
+      );
+    }
+
+    const existingRow = await fetchPartoRow(id);
+    if (!existingRow) {
+      return res.status(404).json({ error: 'Parto no encontrado' });
+    }
+    await applyCorrelativoOnUpdate(transformedData, existingRow);
     
     // Normalizar RUT si se actualiza
     if (transformedData.rut) {
@@ -342,7 +453,8 @@ router.put('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Parto no encontrado' });
     }
-    
+
+    logAudit(req, 'UPDATE', result.rows[0].id);
     res.json(transformRowToFrontendFormat(result.rows[0]));
   } catch (error) {
     if (error.statusCode === 400) {
@@ -376,7 +488,8 @@ router.delete('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Parto no encontrado' });
     }
-    
+
+    logAudit(req, 'DELETE', result.rows[0].id);
     res.json({ message: 'Parto eliminado correctamente', id: result.rows[0].id });
   } catch (error) {
     return sendError(res, 500, 'Error al eliminar el parto', error);
@@ -396,7 +509,9 @@ function transformRowToFrontendFormat(row) {
   
   // Agregar campos compatibles con el formato anterior
   transformed._traceId = row.trace_id;
-  transformed.numero = row.correlativo?.toString() || row.n_parto_ano?.toString() || '';
+  transformed.numero = isExtrahospitalario(row.tipo_parto)
+    ? ''
+    : (row.correlativo?.toString() || row.n_parto_ano?.toString() || '');
   transformed.id = row.id;
   transformed.fechaParto = formattedDate;
   transformed.fecha = formattedDate;

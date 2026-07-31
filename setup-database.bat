@@ -134,9 +134,9 @@ echo CORS_ORIGIN=http://localhost:5173,http://localhost:3000
 echo.
 echo # Limpiar tabla antes de importar datos
 echo CLEAR_TABLE=false
-) > server\.env
+) > .env
 
-echo [OK] Archivo server\.env creado con la configuración
+echo [OK] Archivo .env creado en la raiz del proyecto con la configuracion
 echo.
 
 REM Limpiar variable de entorno sensible

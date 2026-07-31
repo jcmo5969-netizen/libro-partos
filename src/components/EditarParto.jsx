@@ -304,7 +304,7 @@ function EditarParto({ onClose, onSave, partoData }) {
       // Identidad y metadatos que no se editan desde el formulario
       id: partoData.id,
       _traceId: partoData._traceId || partoData.traceId || partoData.trace_id,
-      correlativo: partoData.correlativo,
+      correlativo: formData.tipoParto === 'EXTRAHOSPITALARIO' ? null : partoData.correlativo,
       creadoPor: partoData.creadoPor || partoData.creado_por,
       registradoPor: partoData.registradoPor,
       registradoPorUsername: partoData.registradoPorUsername || partoData.creadoPor || partoData.creado_por,
@@ -500,6 +500,11 @@ function EditarParto({ onClose, onSave, partoData }) {
                     <option value="CES URG">CES URG</option>
                     <option value="EXTRAHOSPITALARIO">EXTRAHOSPITALARIO</option>
                   </select>
+                  {formData.tipoParto === 'EXTRAHOSPITALARIO' && (
+                    <p className="form-hint" style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: '#666' }}>
+                      Los partos extrahospitalarios se registran sin número correlativo.
+                    </p>
+                  )}
                 </div>
               </div>
             </section>

@@ -74,8 +74,10 @@ async function main() {
   for (const user of rows) {
     const password = generatePassword();
     const hash = await bcrypt.hash(password, 12);
+    // token_version + 1: sin esto, una sesión ya iniciada con la contraseña
+    // comprometida seguiría siendo válida hasta que el JWT expirara por su cuenta.
     await pool.query(
-      'UPDATE usuarios SET password_hash = $1, must_change_password = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE usuarios SET password_hash = $1, must_change_password = TRUE, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hash, user.id]
     );
     nuevas.push({ username: user.username, password });

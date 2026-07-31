@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import pool from '../db/connection.js';
 import dotenv from 'dotenv';
+import { validatePassword } from '../utils/password.js';
 
 dotenv.config();
 
@@ -17,8 +18,9 @@ async function createAdmin() {
     const email = process.env.ADMIN_EMAIL || 'admin@hospital.cl';
 
     // Sin contraseña por defecto: obligar a definir ADMIN_PASSWORD en el entorno.
-    if (!password || password.length < 8) {
-      console.error('❌ Defina ADMIN_PASSWORD (>=8 caracteres) en el entorno antes de crear el administrador.');
+    const passwordError = password ? validatePassword(password, { username }) : 'ADMIN_PASSWORD no definida';
+    if (passwordError) {
+      console.error(`❌ Defina ADMIN_PASSWORD en el entorno antes de crear el administrador: ${passwordError}`);
       await pool.end();
       process.exit(1);
     }

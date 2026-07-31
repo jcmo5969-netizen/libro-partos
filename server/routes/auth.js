@@ -1,8 +1,10 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db/connection.js';
-import { signToken, verifyToken, authenticateToken } from '../middleware/auth.js';
+import { signToken, authenticateToken } from '../middleware/auth.js';
+import { apiLimiter } from '../middleware/rateLimit.js';
 import { sendError } from '../utils/httpError.js';
+import { validatePassword } from '../utils/password.js';
 
 const router = express.Router();
 
@@ -32,7 +34,7 @@ router.post('/login', async (req, res) => {
 
     // Buscar usuario
     const result = await pool.query(
-      'SELECT id, username, password_hash, nombre_completo, email, rol, activo, must_change_password FROM usuarios WHERE username = $1',
+      'SELECT id, username, password_hash, nombre_completo, email, rol, activo, must_change_password, token_version FROM usuarios WHERE username = $1',
       [username]
     );
 
@@ -61,15 +63,23 @@ router.post('/login', async (req, res) => {
     );
 
     // Generar token JWT (firma encapsulada en middleware/auth.js).
-    const token = signToken({ userId: user.id, username: user.username, rol: user.rol });
+    const token = signToken({
+      userId: user.id,
+      username: user.username,
+      rol: user.rol,
+      tokenVersion: user.token_version,
+    });
 
     // JWT en cookie httpOnly: no accesible desde JavaScript (mitiga robo por XSS).
     res.cookie(TOKEN_COOKIE, token, cookieOptions);
 
-    // Se mantiene `token` en el cuerpo por compatibilidad; el frontend web ya no lo
-    // almacena en localStorage (usa la cookie). Útil para clientes no-navegador.
+    // El token ya NO viaja en el cuerpo de la respuesta: duplicarlo ahí anula la
+    // protección de la cookie httpOnly (queda expuesto en logs de proxy, devtools,
+    // historial de red). getToken()/setToken() en el frontend son código muerto
+    // (nunca se invocan) — la SPA solo usa la cookie. Si algún cliente no-navegador
+    // dependía de leer `token` aquí, debe migrar a un HTTP client con soporte de
+    // cookies (o usar Authorization: Bearer con un token obtenido por otra vía).
     res.json({
-      token,
       user: {
         id: user.id,
         username: user.username,
@@ -114,51 +124,23 @@ router.post('/logout', (req, res) => {
  * GET /api/auth/me
  * Obtener información del usuario actual
  */
-router.get('/me', async (req, res) => {
-  try {
-    const authHeader = req.headers['authorization'];
-    const token = req.cookies?.token || (authHeader && authHeader.split(' ')[1]);
-
-    if (!token) {
-      return res.status(401).json({ error: 'Token de acceso requerido' });
-    }
-
-    const decoded = verifyToken(token);
-
-    const result = await pool.query(
-      'SELECT id, username, nombre_completo, email, rol, activo, must_change_password FROM usuarios WHERE id = $1',
-      [decoded.userId]
-    );
-
-    if (result.rows.length === 0 || !result.rows[0].activo) {
-      return res.status(401).json({ error: 'Usuario no válido o inactivo' });
-    }
-
-    const user = result.rows[0];
-    res.json({
-      id: user.id,
-      username: user.username,
-      nombreCompleto: user.nombre_completo,
-      email: user.email,
-      rol: user.rol,
-      mustChangePassword: user.must_change_password === true,
-    });
-  } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(403).json({ error: 'Token inválido' });
-    }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(403).json({ error: 'Token expirado' });
-    }
-    return sendError(res, 500, 'Error al verificar usuario', error);
-  }
+router.get('/me', authenticateToken, (req, res) => {
+  const user = req.user;
+  res.json({
+    id: user.id,
+    username: user.username,
+    nombreCompleto: user.nombre_completo,
+    email: user.email,
+    rol: user.rol,
+    mustChangePassword: user.must_change_password === true,
+  });
 });
 
 /**
  * POST /api/auth/change-password
  * Cambiar la contraseña del usuario autenticado (obligatorio en el primer acceso).
  */
-router.post('/change-password', authenticateToken, async (req, res) => {
+router.post('/change-password', apiLimiter, authenticateToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
@@ -166,8 +148,9 @@ router.post('/change-password', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'La contraseña actual y la nueva son requeridas' });
     }
 
-    if (newPassword.length < 8) {
-      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres' });
+    const passwordError = validatePassword(newPassword, { username: req.user.username });
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     if (currentPassword === newPassword) {
@@ -191,10 +174,24 @@ router.post('/change-password', authenticateToken, async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    await pool.query(
-      'UPDATE usuarios SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+    // token_version + 1 invalida cualquier otra sesión/JWT emitido antes de este
+    // cambio (p. ej. uno robado por sniffing en la LAN sin TLS). Se re-emite un
+    // token nuevo con la versión actualizada para no cerrar la sesión que acaba
+    // de autenticarse con currentPassword.
+    const updateResult = await pool.query(
+      `UPDATE usuarios
+       SET password_hash = $1, must_change_password = FALSE, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING token_version`,
       [passwordHash, user.id]
     );
+    const newToken = signToken({
+      userId: req.user.id,
+      username: req.user.username,
+      rol: req.user.rol,
+      tokenVersion: updateResult.rows[0].token_version,
+    });
+    res.cookie(TOKEN_COOKIE, newToken, cookieOptions);
 
     res.json({
       message: 'Contraseña actualizada correctamente',

@@ -19,6 +19,8 @@ const idempotentMigrations = [
   'add_imc_materno.sql',
   'widen_grupo_rh.sql',
   'add_must_change_password.sql',
+  'add_token_version.sql',
+  'add_audit_log.sql',
 ];
 
 export async function runAutoMigrations() {

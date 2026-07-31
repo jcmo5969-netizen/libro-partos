@@ -148,8 +148,8 @@ export async function getPartos(filters = {}) {
     if (filters.offset) queryParams.append('offset', filters.offset);
     
     const url = `${API_BASE_URL}/partos${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
-    console.log(`🔗 Intentando conectar a: ${url}`);
-    
+    // No registrar la URL completa: el filtro por RUT viaja en el query string y es PHI.
+
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
@@ -247,7 +247,6 @@ export async function getPartoById(id) {
  */
 export async function createParto(partoData) {
   try {
-    console.log('📤 Enviando datos al servidor:', JSON.stringify(partoData, null, 2));
     const response = await fetch(`${API_BASE_URL}/partos`, {
       method: 'POST',
       credentials: 'include',
@@ -257,10 +256,11 @@ export async function createParto(partoData) {
       },
       body: JSON.stringify(partoData),
     });
-    
+
     const responseText = await response.text();
-    console.log('📥 Respuesta del servidor:', response.status, responseText.substring(0, 500));
-    
+    // No registrar el payload/respuesta completos: contienen PHI (RUT, VIH, etc.)
+    // y quedarían visibles en la consola del navegador en equipos compartidos.
+
     if (!response.ok) {
       let errorData;
       try {

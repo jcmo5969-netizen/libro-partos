@@ -513,6 +513,11 @@ function NuevoParto({ onClose, onSave, data = [] }) {
                     <option value="CES URG">CES URG</option>
                     <option value="EXTRAHOSPITALARIO">EXTRAHOSPITALARIO</option>
                   </select>
+                  {formData.tipoParto === 'EXTRAHOSPITALARIO' && (
+                    <p className="form-hint" style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: '#666' }}>
+                      Los partos extrahospitalarios se registran sin número correlativo.
+                    </p>
+                  )}
                 </div>
               </div>
             </section>

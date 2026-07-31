@@ -86,48 +86,16 @@ function App() {
         const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
         console.log(`📡 URL de API configurada: ${API_URL}`)
         
-        try {
-          // Cargar TODOS los partos (paginando por lotes, sin tope que recorte registros)
-          const partos = await getAllPartos()
-          console.log(`✅ Datos cargados desde API: ${partos.length} registros`)
-          setData(partos)
-          
-          // Verificar alertas
-          const detectedAlerts = checkAlerts(partos)
-          setAlerts(detectedAlerts)
-          return // Éxito, salir de la función
-        } catch (apiError) {
-          console.error('❌ Error cargando desde API:', apiError)
-          console.warn('⚠️ API no disponible, intentando cargar desde archivo como fallback...')
-          
-          // Fallback: intentar cargar desde archivo si la API no está disponible
-          try {
-            const response = await fetch('/datos.txt')
-            if (response.ok) {
-              const text = await response.text()
-              const { parseData } = await import('./utils/dataParser')
-              const parsedData = parseData(text)
-              console.log(`⚠️ Datos cargados desde archivo (fallback): ${parsedData.length} registros`)
-              setData(parsedData)
-              const detectedAlerts = checkAlerts(parsedData)
-              setAlerts(detectedAlerts)
-              setApiError(`⚠️ API no disponible (${apiError.message}). Usando datos del archivo local.`)
-              
-              // Agregar alerta informativa
-              setAlerts(prev => [{
-                type: 'warning',
-                title: '⚠️ Modo Fallback Activo',
-                message: `No se pudo conectar con la API (${API_URL}). Los datos se están cargando desde el archivo local. Asegúrate de que el servidor backend esté ejecutándose en el puerto 5000.`
-              }, ...prev])
-              return
-            }
-          } catch (fileError) {
-            console.error('❌ Error cargando archivo:', fileError)
-          }
-          
-          // Si ambos fallan, lanzar error
-          throw new Error(`No se pudo conectar con la API (${apiError.message}) ni cargar datos del archivo`)
-        }
+        // Cargar TODOS los partos (paginando por lotes, sin tope que recorte registros).
+        // Sin fallback a un archivo estático: un datos.txt en public/ serviría PHI sin
+        // autenticación a cualquiera que conozca la URL.
+        const partos = await getAllPartos()
+        console.log(`✅ Datos cargados desde API: ${partos.length} registros`)
+        setData(partos)
+
+        const detectedAlerts = checkAlerts(partos)
+        setAlerts(detectedAlerts)
+        return
       } catch (error) {
         console.error('❌ Error cargando datos:', error)
         setApiError(error.message || 'Error al cargar los datos')

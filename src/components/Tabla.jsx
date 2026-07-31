@@ -4,6 +4,27 @@ import ExcelJS from 'exceljs'
 import { puedeEditarParto, puedeEliminarParto } from '../services/authService'
 import './Tabla.css'
 
+function isExtrahospitalario(tipoParto) {
+  return String(tipoParto || '').toUpperCase().includes('EXTRAHOSPITALARIO')
+}
+
+// Neutraliza inyección de fórmulas/DDE en la exportación a Excel: campos de texto
+// libre (comentarios, nombres, etc.) los digita cualquier usuario autenticado, y
+// Excel/LibreOffice evalúan como fórmula cualquier celda que empiece con =, +, -, @
+// o tab/CR al abrir el archivo.
+function sanitizeForExcelFormula(value) {
+  if (typeof value !== 'string' || value.length === 0) return value
+  if (/^[=+\-@\t\r]/.test(value)) return `'${value}`
+  return value
+}
+
+function formatCorrelativoDisplay(item) {
+  if (isExtrahospitalario(item.tipoParto) && (item.correlativo == null || item.correlativo === '')) {
+    return '—'
+  }
+  return item.correlativo ?? item.numero ?? '-'
+}
+
 // Todas las columnas del sistema para exportar (información completa del libro de partos)
 const EXPORT_COLUMNS = [
   { key: 'correlativo', label: 'N°' },
@@ -554,10 +575,15 @@ function Tabla({ data, onDelete, onEdit, filter, onClearFilter }) {
       return String(a.horaParto ?? a.hora ?? '').localeCompare(String(b.horaParto ?? b.hora ?? ''), 'es', { numeric: true })
     })
 
-    exportData.forEach((item, idx) => {
+    let hospitalExportSeq = 0
+    exportData.forEach((item) => {
       const row = ws.addRow(EXPORT_COLUMNS.map(col => {
-        if (col.key === 'correlativo') return idx + 1
-        return getExportValue(item, col.key)
+        if (col.key === 'correlativo') {
+          if (isExtrahospitalario(item.tipoParto)) return ''
+          hospitalExportSeq += 1
+          return hospitalExportSeq
+        }
+        return sanitizeForExcelFormula(getExportValue(item, col.key))
       }))
       row.eachCell((cell, colNumber) => {
         cell.alignment = { vertical: 'middle', wrapText: true }
@@ -816,9 +842,9 @@ function Tabla({ data, onDelete, onEdit, filter, onClearFilter }) {
                         const value = getCellValue(item, column.key)
                         let displayValue = '-'
                         
-                        // Si es la columna de número, usar el correlativo
-                        if (column.key === 'numero') {
-                          displayValue = item.correlativo ?? item.numero ?? '-'
+                        // Si es la columna de número, usar el correlativo (vacío en extrahospitalarios)
+                        if (column.key === 'numero' || column.key === 'correlativo') {
+                          displayValue = formatCorrelativoDisplay(item)
                         } else if (column.key === 'fecha') {
                           // Formatear fecha a DD-MM-YYYY
                           const fecha = item.fechaParto || item.fecha || value
